@@ -8,3 +8,31 @@
 - `submissions/`: Out-of-repo backups of generated submission CSVs.
 
 These folders are ignored by Git—only commit lightweight descriptors (e.g., this README).
+
+## 現行DAG
+
+```
+raw/signate/{train,test}.csv
+        └─ assign_data_id ──┬─▶ 01_tag_id_features/{train,test}_tag_ids.parquet
+                             │
+                             └─▶ 01_drop_sparse_columns/{train,test}.parquet
+                                       └─▶ 01_join_population_projection/{train,test}.parquet
+                                                 └─▶ 01_split_by_type/{train,test}_{kodate,mansion}.parquet
+
+raw/population/mesh1km_2024 → lookup_population_mesh/mesh1km_population.parquet
+                                         │
+                                         └─ (参照) join_population_projection
+```
+
+| ステップ | 入力 | 主な処理 | 出力アーティファクト |
+| --- | --- | --- | --- |
+| `assign_data_id` | `raw/signate/train.csv`, `raw/signate/test.csv` | trainへ連番`data_id`、testへ既存`id`を付与 | `interim/00_assign_data_id/{train,test}.parquet` |
+| `build_tag_id_features` | `00_assign_data_id` | スラッシュ区切りタグを展開し、タグ辞書と one-hot 行列を作成 | `interim/01_tag_id_features/tag_ids.parquet`, `train_tag_ids.parquet`, `test_tag_ids.parquet` |
+| `drop_sparse_columns` | `00_assign_data_id` | 欠損率99%以上の列（13列）を除去 | `interim/01_drop_sparse_columns/{train,test}.parquet` |
+| `join_population_projection` | `01_drop_sparse_columns`, `lookup_population_mesh/mesh1km_population.parquet` | lon/latから1kmメッシュを求め、将来人口(2025-2055)を付与 | `interim/01_join_population_projection/{train,test}.parquet` |
+| `split_signate_by_type` | `01_join_population_projection` | `bukken_type`（1202=戸建, 1302=マンション）別に分割 | `interim/01_split_by_type/{train,test}_{kodate,mansion}.parquet` |
+
+補足:
+
+- `lookup_population_mesh/mesh1km_population.parquet` は `join_population_projection` 実行時に GeoJSON 群から自動生成・キャッシュされる。
+- 旧版アーティファクトは `interim/99_verYYYYMMDD_HHMM_*` に退避する慣習を守ることで、DAG 表示と実行フローの順番が一致する。
