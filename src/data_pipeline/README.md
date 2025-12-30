@@ -12,6 +12,7 @@
 
 - `assign_data_id`: Signate の `train.csv` / `test.csv` を読み込み、`data_id` 列を付与（train は `0..N-1`、test は既存の `id` を使用）し、`data/interim/00_assign_data_id/{train,test}.parquet` を生成。
 - `drop_sparse_columns`: `00_assign_data_id` の出力を受け取り、train/test ともに欠損率 99% 超のカラムを削除して `data/interim/01_drop_sparse_columns/{train,test}.parquet` を生成。
+- `join_population_projection`: `01_drop_sparse_columns` の出力に対して 1km メッシュ人口予測（2025/2035/2045/2055年の `PTN` 値）を `lon` / `lat` から算出したメッシュ ID でマージし、`data/interim/01_join_population_projection/{train,test}.parquet` を生成。47 都道府県分の GeoJSON を一括して `data/interim/lookup_population_mesh/mesh1km_population.parquet` にキャッシュする。
 - `split_signate_by_type`: `01_drop_sparse_columns` の出力を読み込み、`bukken_type`（1202=戸建、1302=マンション）ごとに分割し、`data/interim/01_split_by_type/` に 4 ファイルを書き出し。
 
 登録済みステップを順番どおり実行するには:

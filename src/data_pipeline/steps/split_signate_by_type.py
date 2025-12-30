@@ -16,7 +16,7 @@ TYPE_NAME_MAP = {
 
 
 def _load_clean_dataset(dataset_name: str) -> pd.DataFrame:
-    source_path = INTERIM_DIR / "01_drop_sparse_columns" / f"{dataset_name}.parquet"
+    source_path = INTERIM_DIR / "01_join_population_projection" / f"{dataset_name}.parquet"
     if not source_path.exists():
         raise FileNotFoundError(
             f"{source_path} not found. Run the drop_sparse_columns step first."
