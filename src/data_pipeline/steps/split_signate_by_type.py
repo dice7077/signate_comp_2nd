@@ -15,11 +15,11 @@ TYPE_NAME_MAP = {
 }
 
 
-def _load_assigned_dataset(dataset_name: str) -> pd.DataFrame:
-    source_path = INTERIM_DIR / "00_assign_data_id" / f"{dataset_name}.parquet"
+def _load_clean_dataset(dataset_name: str) -> pd.DataFrame:
+    source_path = INTERIM_DIR / "01_drop_sparse_columns" / f"{dataset_name}.parquet"
     if not source_path.exists():
         raise FileNotFoundError(
-            f"{source_path} not found. Run the assign_data_id step first."
+            f"{source_path} not found. Run the drop_sparse_columns step first."
         )
     df = pd.read_parquet(source_path)
     if "data_id" not in df.columns:
@@ -28,12 +28,12 @@ def _load_assigned_dataset(dataset_name: str) -> pd.DataFrame:
 
 
 def split_signate_by_type(force: bool = True) -> Dict[str, List[dict]]:
-    """Split the data_id-assigned train/test tables by bukken_type."""
+    """Split the cleaned train/test tables (after dropping sparse columns) by bukken_type."""
     output_dir = interim_subdir("01_split_by_type")
     stats: List[dict] = []
 
     for dataset_name in ("train", "test"):
-        df = _load_assigned_dataset(dataset_name)
+        df = _load_clean_dataset(dataset_name)
         if "bukken_type" not in df.columns:
             raise KeyError(f"'bukken_type' column not found in {dataset_name} dataset")
         bukken_series = pd.to_numeric(df["bukken_type"], errors="coerce")

@@ -1,0 +1,5 @@
+# Cursor agent rules
+
+- Keep `data/interim` step folders aligned with `STEP_REGISTRY` order using the `NN_step_name` pattern.
+- When retaining deprecated or experimental outputs, rename their folders to start with `99_ver<timestamp>_...`, where `<timestamp>` is in `YYYYMMDD_HHMM` local time (for example `99_ver20251230_1708_split_by_type/`), so humans and automation can easily skip them and duplicate names never collide.
+

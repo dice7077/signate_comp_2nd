@@ -1,34 +1,32 @@
-# Data Pipeline Layout
+# データパイプライン構成
 
-Place deterministic transformation scripts under `src/data_pipeline/steps/`.  Each
-step should:
+決定的な変換スクリプトは `src/data_pipeline/steps/` に配置します。各ステップは以下を守ってください。
 
-1. Read its declared Parquet/CSV inputs from `data/raw`, `data/external`, or
-   `data/interim`.
-2. Persist its Parquet output into `data/interim/<step_name>.parquet` (or a
-   nested folder if multiple outputs) before feeding the next step.
-3. Keep pure Python logic in `src/data_pipeline/utils/` to avoid duplication.
+1. 入力は必ず `data/raw`・`data/external`・`data/interim` のいずれかから宣言済みの Parquet / CSV を読む。
+2. 出力は次のステップに渡す前に `data/interim/<step_name>.parquet`（複数出力ならサブフォルダ）へ保存する。
+3. ロジックが重複しそうな処理は `src/data_pipeline/utils/` に切り出し、ステップ側は薄く保つ。
 
-You can orchestrate the steps from lightweight CLI entrypoints inside
-`scripts/`, keeping notebooks focused on ad-hoc EDA.
+ノートブックはアドホックな検証に集中させ、確定したフローは `scripts/` 配下の軽量 CLI エントリから実行します。
 
-## Available steps
+## 利用可能なステップ
 
-- `assign_data_id`: loads the raw Signate `train.csv` / `test.csv`, adds a
-  `data_id` column (train gets `0..N-1`, test reuses the provided `id`), and
-  writes `data/interim/00_assign_data_id/{train,test}.parquet`.
-- `split_signate_by_type`: reads the `00_assign_data_id` outputs, splits each by
-  `bukken_type` (1202 = kodate, 1302 = mansion), and persists the four tables to
-  `data/interim/01_split_by_type/`.
+- `assign_data_id`: Signate の `train.csv` / `test.csv` を読み込み、`data_id` 列を付与（train は `0..N-1`、test は既存の `id` を使用）し、`data/interim/00_assign_data_id/{train,test}.parquet` を生成。
+- `drop_sparse_columns`: `00_assign_data_id` の出力を受け取り、train/test ともに欠損率 99% 超のカラムを削除して `data/interim/01_drop_sparse_columns/{train,test}.parquet` を生成。
+- `split_signate_by_type`: `01_drop_sparse_columns` の出力を読み込み、`bukken_type`（1202=戸建、1302=マンション）ごとに分割し、`data/interim/01_split_by_type/` に 4 ファイルを書き出し。
 
-Run all registered steps in order:
+登録済みステップを順番どおり実行するには:
 
 ```
 python scripts/run_data_pipeline.py
 ```
 
-See the registry without executing anything:
+実行せずレジストリ内容だけ確認するには:
 
 ```
 python scripts/run_data_pipeline.py --list
 ```
+
+## Interim ディレクトリ命名ルール（エージェント向け）
+
+- 現役のステップ出力は `STEP_REGISTRY` の順番に合わせて `NN_step_name` という 0 埋め序数付きプレフィックスを使う。人が見た並びと実行順が一致するようにするため。
+- 使わなくなったステップ（または別バージョン）の成果物を残す場合は、フォルダ名を `99_ver<timestamp>_...` へ変更して保管する。`<timestamp>` はローカル時間の `YYYYMMDD_HHMM` 形式（例: `99_ver20251230_1708_split_by_type/`）とし、同日に複数回出しても衝突しないようにする。こうしておくと Deprecated 版が一目で分かり、後続処理でも誤って参照しにくい。
