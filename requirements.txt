@@ -1,0 +1,22 @@
+# core
+numpy
+pandas
+scipy
+scikit-learn
+
+# model
+lightgbm
+catboost
+
+# data
+pyarrow
+fastparquet
+
+# utils
+tqdm
+joblib
+pyyaml
+
+# viz (optional)
+matplotlib
+seaborn
