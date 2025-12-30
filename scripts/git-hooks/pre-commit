@@ -1,0 +1,14 @@
+#!/bin/sh
+
+set -eu
+
+branch_name="$(git rev-parse --abbrev-ref HEAD)"
+
+if [ "$branch_name" = "main" ]; then
+  cat <<'EOF'
+[branch protection] Direct commits to main are disabled.
+Please create or switch to a feature branch before committing.
+EOF
+  exit 1
+fi
+
