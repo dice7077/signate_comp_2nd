@@ -36,6 +36,10 @@ STEP_LAYOUT: "OrderedDict[str, StepLayout]" = OrderedDict(
             "join_population_projection",
             StepLayout(stage=4, order=1, slug="join_population_projection"),
         ),
+        (
+            "join_land_price",
+            StepLayout(stage=5, order=1, slug="join_land_price"),
+        ),
     ]
 )
 

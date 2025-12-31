@@ -46,6 +46,13 @@ STEP_OUTPUT_SPECS: "OrderedDict[str, Sequence[OutputSpec]]" = OrderedDict(
             ),
         ),
         (
+            "join_land_price",
+            (
+                OutputSpec(filename="train.parquet", dataset="train"),
+                OutputSpec(filename="test.parquet", dataset="test"),
+            ),
+        ),
+        (
             "build_tag_id_features",
             (
                 OutputSpec(filename="train_tag_ids.parquet", dataset="train"),
