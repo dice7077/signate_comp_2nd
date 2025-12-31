@@ -13,6 +13,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.data_pipeline.steps import STEP_REGISTRY
+from src.data_pipeline.validation import ValidationError, validate_steps
 
 
 def parse_args() -> argparse.Namespace:
@@ -86,6 +87,24 @@ def main() -> None:
         result = _call_step(func, force=args.force)
         if result is not None:
             print(json.dumps(result, indent=2, ensure_ascii=False))
+        _run_step_validation(name)
+
+
+def _run_step_validation(step_name: str) -> None:
+    results = validate_steps([step_name], raise_on_error=False)
+    errors = [entry for entry in results if entry["status"] != "ok"]
+    if not errors:
+        print(f"[VALIDATION] {step_name}: OK ({len(results)}ファイル)")
+        return
+
+    for entry in errors:
+        pretty_path = entry.get("path") or entry["output_label"]
+        message = entry.get("message") or "件数検証で不一致"
+        print(
+            f"[VALIDATION][NG] {entry['step']}::{entry['output_label']} "
+            f"path={pretty_path} reason={message}"
+        )
+    raise ValidationError(f"{step_name} の件数検証に失敗しました。")
 
 
 if __name__ == "__main__":
