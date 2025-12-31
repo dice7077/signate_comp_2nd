@@ -8,11 +8,14 @@ from typing import Dict, List
 import pandas as pd
 
 from ..utils.paths import PROJECT_ROOT, ensure_parent, interim_subdir, raw_signate_path
+from .layout import step_output_dir
+
+OUTPUT_DIR_NAME = step_output_dir("assign_data_id")
 
 
 def assign_data_id(force: bool = True) -> Dict[str, List[dict]]:
     """Attach a unique data_id column to the raw Signate train/test tables."""
-    output_dir = interim_subdir("00_assign_data_id")
+    output_dir = interim_subdir(OUTPUT_DIR_NAME)
     stats: List[dict] = []
 
     dataset_files = {

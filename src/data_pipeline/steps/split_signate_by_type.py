@@ -8,10 +8,15 @@ import pandas as pd
 
 from ..utils.paths import INTERIM_DIR, PROJECT_ROOT, ensure_parent, interim_subdir
 from ..utils.signate_types import TYPE_NAME_MAP
+from .layout import step_output_dir
+
+
+SOURCE_DIR = INTERIM_DIR / step_output_dir("join_population_projection")
+OUTPUT_DIR_NAME = step_output_dir("split_signate_by_type")
 
 
 def _load_clean_dataset(dataset_name: str) -> pd.DataFrame:
-    source_path = INTERIM_DIR / "01_join_population_projection" / f"{dataset_name}.parquet"
+    source_path = SOURCE_DIR / f"{dataset_name}.parquet"
     if not source_path.exists():
         raise FileNotFoundError(
             f"{source_path} not found. Run the drop_sparse_columns step first."
@@ -24,7 +29,7 @@ def _load_clean_dataset(dataset_name: str) -> pd.DataFrame:
 
 def split_signate_by_type(force: bool = True) -> Dict[str, List[dict]]:
     """Split the cleaned train/test tables (after dropping sparse columns) by bukken_type."""
-    output_dir = interim_subdir("01_split_by_type")
+    output_dir = interim_subdir(OUTPUT_DIR_NAME)
     stats: List[dict] = []
 
     for dataset_name in ("train", "test"):

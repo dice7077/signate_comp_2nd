@@ -14,11 +14,12 @@ from ..utils.paths import (
     interim_subdir,
 )
 from ..utils.signate_types import TYPE_NAME_MAP
+from .layout import step_output_dir
 
 UNKNOWN_TYPE_LABEL = "unknown"
 
-SOURCE_DIR = INTERIM_DIR / "00_assign_data_id"
-OUTPUT_DIR_NAME = "01_tag_id_features"
+SOURCE_DIR = INTERIM_DIR / step_output_dir("assign_data_id")
+OUTPUT_DIR_NAME = step_output_dir("build_tag_id_features")
 
 # Keep the order stable so train/test share identical column layouts.
 TAG_FEATURES = OrderedDict(
@@ -34,7 +35,7 @@ def build_tag_id_features(force: bool = True) -> Dict[str, object]:
     """
     Construct lookup + wide matrices for slash-delimited tag columns.
 
-    Generates three Parquet files inside data/interim/01_tag_id_features/:
+    Generates three Parquet files inside data/interim/02_01_build_tag_id_features/:
     - tag_ids.parquet: feature_name/tag_id lookup (union of train+test).
     - train_tag_ids.parquet: one-hot matrix keyed by data_id.
     - test_tag_ids.parquet: same columns/order as train.

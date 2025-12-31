@@ -15,6 +15,7 @@ from ..utils.paths import (
     ensure_parent,
     interim_subdir,
 )
+from .layout import step_output_dir
 
 
 # Years to expose from the population projection GeoJSON.
@@ -28,8 +29,8 @@ LOOKUP_DIR = INTERIM_DIR / "lookup_population_mesh"
 LOOKUP_FILENAME = "mesh1km_population.parquet"
 LOOKUP_PATH = LOOKUP_DIR / LOOKUP_FILENAME
 
-SOURCE_DIR = INTERIM_DIR / "01_drop_sparse_columns"
-OUTPUT_DIR_NAME = "01_join_population_projection"
+SOURCE_DIR = INTERIM_DIR / step_output_dir("drop_sparse_columns")
+OUTPUT_DIR_NAME = step_output_dir("join_population_projection")
 MESH_ID_COLUMN = "mesh_id_1km"
 
 

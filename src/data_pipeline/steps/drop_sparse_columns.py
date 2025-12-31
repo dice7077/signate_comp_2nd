@@ -7,6 +7,7 @@ from typing import Dict, List
 import pandas as pd
 
 from ..utils.paths import INTERIM_DIR, PROJECT_ROOT, ensure_parent, interim_subdir
+from .layout import step_output_dir
 
 # Columns whose null rate exceeds 99% in both train/test after assign_data_id.
 SPARSE_COLUMNS = [
@@ -27,8 +28,12 @@ SPARSE_COLUMNS = [
 ]
 
 
+ASSIGN_OUTPUT_DIR = step_output_dir("assign_data_id")
+OUTPUT_DIR_NAME = step_output_dir("drop_sparse_columns")
+
+
 def _load_assigned_dataset(dataset_name: str) -> pd.DataFrame:
-    source_path = INTERIM_DIR / "00_assign_data_id" / f"{dataset_name}.parquet"
+    source_path = INTERIM_DIR / ASSIGN_OUTPUT_DIR / f"{dataset_name}.parquet"
     if not source_path.exists():
         raise FileNotFoundError(
             f"{source_path} not found. Run the assign_data_id step first."
@@ -38,7 +43,7 @@ def _load_assigned_dataset(dataset_name: str) -> pd.DataFrame:
 
 def drop_sparse_columns(force: bool = True) -> Dict[str, List[dict]]:
     """Remove columns with more than 99% null rate from train/test tables."""
-    output_dir = interim_subdir("01_drop_sparse_columns")
+    output_dir = interim_subdir(OUTPUT_DIR_NAME)
     stats: List[dict] = []
 
     for dataset_name in ("train", "test"):
