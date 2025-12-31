@@ -14,6 +14,7 @@ These folders are ignored by Git—only commit lightweight descriptors (e.g., th
 ```
 raw/signate/{train,test}.csv
         └─ 00_01_assign_data_id ──┬─▶ 02_01_build_tag_id_features/{train,test}_tag_ids.parquet
+                                   ├─▶ 03_01_join_koji_price/{train,test}.parquet
                                    │
                                    └─▶ 01_01_drop_sparse_columns/{train,test}.parquet
                                              └─▶ 01_02_join_population_projection/{train,test}.parquet
@@ -27,6 +28,7 @@ raw/population/mesh1km_2024 → lookup_population_mesh/mesh1km_population.parque
 | ステップ | 入力 | 主な処理 | 出力アーティファクト |
 | --- | --- | --- | --- |
 | `assign_data_id` | `raw/signate/train.csv`, `raw/signate/test.csv` | trainへ連番`data_id`、testへ既存`id`を付与 | `interim/00_01_assign_data_id/{train,test}.parquet` |
+| `join_koji_price` | `00_01_assign_data_id` | lon/latから1.5km圏内で最も近い公示価格点（利用現況に「住宅」を含むもの限定）を探索し、用途区分/現況/構造・2018-2023年価格・距離(km)・2022→2023増加率を付与 | `interim/03_01_join_koji_price/{train,test}.parquet` |
 | `build_tag_id_features` | `00_01_assign_data_id` | スラッシュ区切りタグを展開し、タグ辞書と one-hot 行列を作成 | `interim/02_01_build_tag_id_features/tag_ids.parquet`, `train_tag_ids.parquet`, `test_tag_ids.parquet` |
 | `drop_sparse_columns` | `00_01_assign_data_id` | 欠損率99%以上の列（13列）を除去 | `interim/01_01_drop_sparse_columns/{train,test}.parquet` |
 | `join_population_projection` | `01_01_drop_sparse_columns`, `lookup_population_mesh/mesh1km_population.parquet` | lon/latから1kmメッシュを求め、将来人口(2025-2055)を付与 | `interim/01_02_join_population_projection/{train,test}.parquet` |
