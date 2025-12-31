@@ -11,7 +11,7 @@ from ..utils.signate_types import TYPE_NAME_MAP
 from .layout import step_output_dir
 
 
-SOURCE_DIR = INTERIM_DIR / step_output_dir("join_population_projection")
+SOURCE_DIR = INTERIM_DIR / step_output_dir("drop_sparse_columns")
 OUTPUT_DIR_NAME = step_output_dir("split_signate_by_type")
 
 
@@ -19,7 +19,7 @@ def _load_clean_dataset(dataset_name: str) -> pd.DataFrame:
     source_path = SOURCE_DIR / f"{dataset_name}.parquet"
     if not source_path.exists():
         raise FileNotFoundError(
-            f"{source_path} not found. Run the drop_sparse_columns step first."
+            f"{source_path} not found. Run drop_sparse_columns before splitting."
         )
     df = pd.read_parquet(source_path)
     if "data_id" not in df.columns:
@@ -28,7 +28,7 @@ def _load_clean_dataset(dataset_name: str) -> pd.DataFrame:
 
 
 def split_signate_by_type(force: bool = True) -> Dict[str, List[dict]]:
-    """Split the cleaned train/test tables (after dropping sparse columns) by bukken_type."""
+    """Split the cleaned train/test tables (after drop_sparse_columns) by bukken_type."""
     output_dir = interim_subdir(OUTPUT_DIR_NAME)
     stats: List[dict] = []
 

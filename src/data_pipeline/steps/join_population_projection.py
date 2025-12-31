@@ -32,14 +32,16 @@ LOOKUP_PATH = LOOKUP_DIR / LOOKUP_FILENAME
 SOURCE_DIR = INTERIM_DIR / step_output_dir("drop_sparse_columns")
 OUTPUT_DIR_NAME = step_output_dir("join_population_projection")
 MESH_ID_COLUMN = "mesh_id_1km"
+FEATURE_FILENAME_TEMPLATE = "{dataset}_population_features.parquet"
+FEATURE_COLUMNS: Tuple[str, ...] = (MESH_ID_COLUMN, *POPULATION_COLUMNS)
 
 
 def join_population_projection(force: bool = True) -> Dict[str, object]:
     """
-    Enrich the cleaned Signate tables with 1km-mesh population projections.
+    1km メッシュ人口予測値を data_id キーの枝として出力する。
 
-    The population lookup is built from 47 prefecture-level GeoJSON files.
-    Future projections for 2025, 2035, 2045, and 2055 are averaged per mesh.
+    drop_sparse_columns の結果を座標→メッシュ ID で紐付け、`train/test` それぞれに
+    population_features（data_id + mesh_id + 各 PTN 年次列）を生成する。
     """
 
     population_lookup, lookup_stats = _load_population_lookup()
@@ -55,24 +57,26 @@ def join_population_projection(force: bool = True) -> Dict[str, object]:
 
         df = pd.read_parquet(source_path)
         enriched_df, join_stats = _attach_population(df, population_lookup)
-
-        output_path = output_dir / f"{dataset_name}.parquet"
-        if output_path.exists() and not force:
+        feature_path = output_dir / FEATURE_FILENAME_TEMPLATE.format(
+            dataset=dataset_name
+        )
+        if feature_path.exists() and not force:
             raise FileExistsError(
-                f"{output_path} already exists. Pass force=True to overwrite."
+                f"{feature_path} already exists. Pass force=True to overwrite."
             )
-        ensure_parent(output_path)
-        enriched_df.to_parquet(output_path)
+        ensure_parent(feature_path)
+        feature_df = _extract_feature_columns(enriched_df)
+        feature_df.to_parquet(feature_path, index=False)
 
         manifests.append(
             {
                 "dataset": dataset_name,
-                "rows": int(len(enriched_df)),
+                "rows": int(len(feature_df)),
                 "population_columns": POPULATION_COLUMNS,
                 "mesh_ids_missing": join_stats["mesh_ids_missing"],
                 "population_attached_rows": join_stats["population_attached"],
                 "deduplicated_rows": join_stats["deduplicated_rows"],
-                "output_path": str(output_path.relative_to(PROJECT_ROOT)),
+                "feature_output_path": str(feature_path.relative_to(PROJECT_ROOT)),
             }
         )
 
@@ -126,6 +130,14 @@ def _attach_population(
         "deduplicated_rows": deduplicated_rows,
     }
     return merged, stats
+
+
+def _extract_feature_columns(enriched_df: pd.DataFrame) -> pd.DataFrame:
+    required = ["data_id", *FEATURE_COLUMNS]
+    missing = [column for column in required if column not in enriched_df.columns]
+    if missing:
+        raise KeyError(f"Missing expected columns for feature table: {missing}")
+    return enriched_df.loc[:, required].copy()
 
 
 def _compute_mesh_ids(lat_series: pd.Series, lon_series: pd.Series) -> pd.Series:

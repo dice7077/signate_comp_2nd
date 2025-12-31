@@ -62,8 +62,14 @@ STEP_OUTPUT_SPECS: "OrderedDict[str, Sequence[OutputSpec]]" = OrderedDict(
         (
             "join_population_projection",
             (
-                OutputSpec(filename="train.parquet", dataset="train"),
-                OutputSpec(filename="test.parquet", dataset="test"),
+                OutputSpec(
+                    filename="train_population_features.parquet",
+                    dataset="train",
+                ),
+                OutputSpec(
+                    filename="test_population_features.parquet",
+                    dataset="test",
+                ),
             ),
         ),
         (

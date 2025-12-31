@@ -28,14 +28,14 @@ class StepLayout:
 STEP_LAYOUT: "OrderedDict[str, StepLayout]" = OrderedDict(
     [
         ("assign_data_id", StepLayout(stage=0, order=1, slug="assign_data_id")),
-        ("join_koji_price", StepLayout(stage=3, order=1, slug="join_koji_price")),
-        ("build_tag_id_features", StepLayout(stage=2, order=1, slug="build_tag_id_features")),
         ("drop_sparse_columns", StepLayout(stage=1, order=1, slug="drop_sparse_columns")),
+        ("split_signate_by_type", StepLayout(stage=1, order=2, slug="split_by_type")),
+        ("build_tag_id_features", StepLayout(stage=2, order=1, slug="build_tag_id_features")),
+        ("join_koji_price", StepLayout(stage=3, order=1, slug="join_koji_price")),
         (
             "join_population_projection",
-            StepLayout(stage=1, order=2, slug="join_population_projection"),
+            StepLayout(stage=4, order=1, slug="join_population_projection"),
         ),
-        ("split_signate_by_type", StepLayout(stage=1, order=3, slug="split_signate_by_type")),
     ]
 )
 
