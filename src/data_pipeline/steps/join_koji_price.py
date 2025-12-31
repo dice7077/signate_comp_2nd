@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
@@ -21,17 +21,8 @@ from .layout import step_output_dir
 
 EARTH_RADIUS_KM = 6371.0088
 SEARCH_RADIUS_KM = 1.5
+SECONDARY_SEARCH_RADIUS_KM = 3.0
 
-KOJI_PRICE_FIELD_MAP: Tuple[Tuple[str, str], ...] = (
-    ("2023_koji_price", "L01_101"),
-    ("2022_koji_price", "L01_100"),
-    ("2021_koji_price", "L01_099"),
-    ("2020_koji_price", "L01_098"),
-    ("2019_koji_price", "L01_097"),
-    ("2018_koji_price", "L01_096"),
-)
-KOJI_GROWTH_COLUMN = ("koji_price_growth_2023_vs_2022", "2023_koji_price", "2022_koji_price")
-KOJI_USAGE_FIELD = "L01_050"
 KOJI_TEXT_FIELD_MAP: Tuple[Tuple[str, str], ...] = (
     ("koji_usage_status", "L01_027"),  # 利用現況
     ("koji_building_structure", "L01_030"),  # 建物構造
@@ -39,14 +30,90 @@ KOJI_TEXT_FIELD_MAP: Tuple[Tuple[str, str], ...] = (
 
 SOURCE_DIR = INTERIM_DIR / step_output_dir("assign_data_id")
 OUTPUT_DIR_NAME = step_output_dir("join_koji_price")
-KOJI_PRICE_PATH = RAW_DIR / "koji_price" / "L01-23.geojson"
+RAW_KOJI_DIR = RAW_DIR / "koji_price"
+COORD_ROUND_DIGITS = 6
+KOJI_GEOJSON_SOURCES: Tuple[dict, ...] = (
+    {
+        "year": 2023,
+        "price_column": "2023_koji_price",
+        "distance_column": "2023_koji_distance_km",
+        "usage_column": "2023_koji_usage_code",
+        "filename": "L01-23.geojson",
+        "price_field": "L01_101",
+        "usage_field": "L01_050",
+    },
+    {
+        "year": 2022,
+        "price_column": "2022_koji_price",
+        "distance_column": "2022_koji_distance_km",
+        "usage_column": "2022_koji_usage_code",
+        "filename": "L01-22.geojson",
+        "price_field": "L01_100",
+        "usage_field": "L01_050",
+    },
+    {
+        "year": 2021,
+        "price_column": "2021_koji_price",
+        "distance_column": "2021_koji_distance_km",
+        "usage_column": "2021_koji_usage_code",
+        "filename": "L01-21.geojson",
+        "price_field": "L01_094",
+        "usage_field": "L01_047",
+    },
+    {
+        "year": 2020,
+        "price_column": "2020_koji_price",
+        "distance_column": "2020_koji_distance_km",
+        "usage_column": "2020_koji_usage_code",
+        "filename": "L01-20.geojson",
+        "price_field": "L01_006",
+        "usage_field": "L01_047",
+        "price_candidates": ("L01_006",),
+    },
+    {
+        "year": 2019,
+        "price_column": "2019_koji_price",
+        "distance_column": "2019_koji_distance_km",
+        "usage_column": "2019_koji_usage_code",
+        "filename": "L01-19.geojson",
+        "price_field": None,
+        "usage_field": None,
+        "price_candidates": ("L01_006",),
+        "usage_candidates": ("L01_047", "L01_050"),
+        "price_keywords": ("価格", "公示価格", "地価"),
+        "usage_keywords": ("用途",),
+    },
+    {
+        "year": 2018,
+        "price_column": "2018_koji_price",
+        "distance_column": "2018_koji_distance_km",
+        "usage_column": "2018_koji_usage_code",
+        "filename": "L01-18.geojson",
+        "price_field": "L01_006",
+        "usage_field": "L01_047",
+        "price_candidates": ("L01_006",),
+    },
+)
+KOJI_PRICE_COLUMNS: Tuple[str, ...] = tuple(cfg["price_column"] for cfg in KOJI_GEOJSON_SOURCES)
+KOJI_DISTANCE_COLUMNS: Tuple[str, ...] = tuple(
+    cfg["distance_column"] for cfg in KOJI_GEOJSON_SOURCES
+)
+KOJI_USAGE_COLUMNS: Tuple[str, ...] = tuple(cfg["usage_column"] for cfg in KOJI_GEOJSON_SOURCES)
+KOJI_TEXT_ANCHOR_PRICE_COLUMN = KOJI_GEOJSON_SOURCES[0]["price_column"]
+KOJI_PRICE_SOURCE_PATHS: Tuple[Path, ...] = tuple(
+    RAW_KOJI_DIR / cfg["filename"] for cfg in KOJI_GEOJSON_SOURCES
+)
 
 
 def join_koji_price(force: bool = True) -> Dict[str, object]:
     """公示価格GeoJSONから1.5km以内の最近傍価格を data_id 単位でまとめる。"""
 
-    koji_points = _load_koji_price_points(KOJI_PRICE_PATH)
-    tree = _build_spatial_index(koji_points)
+    koji_points_by_year = _load_koji_price_points()
+    tree_by_year = {
+        price_column: _build_spatial_index(df)
+        for price_column, df in koji_points_by_year.items()
+        if not df.empty
+    }
     output_dir = interim_subdir(OUTPUT_DIR_NAME)
 
     manifests: List[dict] = []
@@ -58,7 +125,7 @@ def join_koji_price(force: bool = True) -> Dict[str, object]:
             )
 
         signate_df = _load_signate_subset(source_path)
-        joined_df, stats = _attach_nearest_koji(signate_df, koji_points, tree)
+        joined_df, stats = _attach_nearest_koji(signate_df, koji_points_by_year, tree_by_year)
 
         output_path = output_dir / f"{dataset_name}.parquet"
         if output_path.exists() and not force:
@@ -73,10 +140,12 @@ def join_koji_price(force: bool = True) -> Dict[str, object]:
                 "dataset": dataset_name,
                 "rows": int(len(joined_df)),
                 "within_radius": stats["within_radius"],
+                "within_radius_primary": stats["within_radius_primary"],
                 "outside_radius": stats["outside_radius"],
                 "missing_coordinates": stats["missing_coordinates"],
                 "koji_points": stats["koji_points"],
                 "search_radius_km": SEARCH_RADIUS_KM,
+                "secondary_search_radius_km": SECONDARY_SEARCH_RADIUS_KM,
                 "output_path": str(output_path.relative_to(PROJECT_ROOT)),
             }
         )
@@ -84,7 +153,12 @@ def join_koji_price(force: bool = True) -> Dict[str, object]:
     manifest = {
         "step": "join_koji_price",
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
-        "koji_price_source": str(KOJI_PRICE_PATH.relative_to(PROJECT_ROOT)),
+        "koji_price_sources": [
+            str(path.relative_to(PROJECT_ROOT)) for path in KOJI_PRICE_SOURCE_PATHS
+        ],
+        "coordinate_round_digits": COORD_ROUND_DIGITS,
+        "search_radius_km": SEARCH_RADIUS_KM,
+        "secondary_search_radius_km": SECONDARY_SEARCH_RADIUS_KM,
         "outputs": manifests,
     }
     manifest_path = output_dir / "manifest.json"
@@ -103,8 +177,10 @@ def _load_signate_subset(path: Path) -> pd.DataFrame:
 
 
 def _attach_nearest_koji(
-    signate_df: pd.DataFrame, koji_df: pd.DataFrame, tree: BallTree
-) -> Tuple[pd.DataFrame, Dict[str, int]]:
+    signate_df: pd.DataFrame,
+    koji_points_by_year: Dict[str, pd.DataFrame],
+    trees_by_year: Dict[str, BallTree],
+) -> Tuple[pd.DataFrame, Dict[str, object]]:
     result = pd.DataFrame(
         {
             "data_id": signate_df["data_id"].copy(),
@@ -115,11 +191,12 @@ def _attach_nearest_koji(
     )
     type_labels = result["bukken_type"].map(TYPE_NAME_MAP)
     result["bukken_type_label"] = type_labels.astype("string[python]")
-    for column_name, _ in KOJI_PRICE_FIELD_MAP:
+    for column_name in KOJI_PRICE_COLUMNS:
         result[column_name] = pd.Series(pd.NA, index=result.index, dtype="Float64")
-    result["koji_usage_code"] = pd.Series(pd.NA, index=result.index, dtype="string[python]")
-    result[KOJI_GROWTH_COLUMN[0]] = pd.Series(pd.NA, index=result.index, dtype="Float64")
-    result["koji_distance_km"] = pd.Series(pd.NA, index=result.index, dtype="Float64")
+    for column_name in KOJI_USAGE_COLUMNS:
+        result[column_name] = pd.Series(pd.NA, index=result.index, dtype="string[python]")
+    for column_name in KOJI_DISTANCE_COLUMNS:
+        result[column_name] = pd.Series(pd.NA, index=result.index, dtype="Float64")
     for column_name, _ in KOJI_TEXT_FIELD_MAP:
         result[column_name] = pd.Series(pd.NA, index=result.index, dtype="string[python]")
 
@@ -132,44 +209,59 @@ def _attach_nearest_koji(
         "rows": int(len(signate_df)),
         "valid_coordinates": int(valid_mask.sum()),
         "missing_coordinates": int(len(signate_df) - valid_mask.sum()),
-        "within_radius": 0,
-        "outside_radius": int(len(signate_df)),
-        "koji_points": int(len(koji_df)),
+        "within_radius_primary": {cfg["price_column"]: 0 for cfg in KOJI_GEOJSON_SOURCES},
+        "within_radius": {cfg["price_column"]: 0 for cfg in KOJI_GEOJSON_SOURCES},
+        "outside_radius": {cfg["price_column"]: int(len(signate_df)) for cfg in KOJI_GEOJSON_SOURCES},
+        "koji_points": {
+            cfg["price_column"]: int(
+                len(koji_points_by_year.get(cfg["price_column"], ()))
+            )
+            for cfg in KOJI_GEOJSON_SOURCES
+        },
     }
 
     if valid_mask.any():
         query_coords = np.column_stack([lat.loc[valid_mask], lon.loc[valid_mask]])
         query_rad = np.radians(query_coords.astype(float))
-        distances_rad, indices = tree.query(query_rad, k=1)
-        distances_km = distances_rad[:, 0] * EARTH_RADIUS_KM
-        within_radius = distances_km <= SEARCH_RADIUS_KM
 
-        stats["within_radius"] = int(within_radius.sum())
-        stats["outside_radius"] = stats["rows"] - stats["within_radius"]
+        for config in KOJI_GEOJSON_SOURCES:
+            price_col = config["price_column"]
+            usage_col = config["usage_column"]
+            distance_col = config["distance_column"]
+            points_df = koji_points_by_year.get(price_col)
+            tree = trees_by_year.get(price_col)
 
-        if within_radius.any():
-            matched_signate_idx = valid_indices[within_radius]
-            matched_koji_idx = indices[within_radius, 0]
-            matched_points = koji_df.iloc[matched_koji_idx]
-            matched_distances = distances_km[within_radius]
+            if points_df is None or tree is None or points_df.empty:
+                continue
 
-            result.loc[matched_signate_idx, "koji_usage_code"] = matched_points[
-                "koji_usage_code"
-            ].to_numpy()
-            for column_name, _ in KOJI_PRICE_FIELD_MAP:
-                result.loc[matched_signate_idx, column_name] = matched_points[
-                    column_name
+            distances_rad, indices = tree.query(query_rad, k=1)
+            distances_km = distances_rad[:, 0] * EARTH_RADIUS_KM
+            primary_within = distances_km <= SEARCH_RADIUS_KM
+            secondary_within = distances_km <= SECONDARY_SEARCH_RADIUS_KM
+
+            stats["within_radius_primary"][price_col] = int(primary_within.sum())
+            stats["within_radius"][price_col] = int(secondary_within.sum())
+            stats["outside_radius"][price_col] = stats["rows"] - stats["within_radius"][price_col]
+
+            if secondary_within.any():
+                matched_signate_idx = valid_indices[secondary_within]
+                matched_koji_idx = indices[secondary_within, 0]
+                matched_points = points_df.iloc[matched_koji_idx]
+                matched_distances = distances_km[secondary_within]
+
+                result.loc[matched_signate_idx, price_col] = matched_points[
+                    price_col
                 ].to_numpy()
-            growth_values = _compute_growth(
-                matched_points[KOJI_GROWTH_COLUMN[1]].to_numpy(dtype=float, na_value=np.nan),
-                matched_points[KOJI_GROWTH_COLUMN[2]].to_numpy(dtype=float, na_value=np.nan),
-            )
-            result.loc[matched_signate_idx, KOJI_GROWTH_COLUMN[0]] = growth_values
-            result.loc[matched_signate_idx, "koji_distance_km"] = matched_distances
-            for column_name, _ in KOJI_TEXT_FIELD_MAP:
-                result.loc[matched_signate_idx, column_name] = matched_points[
-                    column_name
+                result.loc[matched_signate_idx, usage_col] = matched_points[
+                    usage_col
                 ].to_numpy()
+                result.loc[matched_signate_idx, distance_col] = matched_distances
+
+                if price_col == KOJI_TEXT_ANCHOR_PRICE_COLUMN:
+                    for column_name, _ in KOJI_TEXT_FIELD_MAP:
+                        result.loc[matched_signate_idx, column_name] = matched_points[
+                            column_name
+                        ].to_numpy()
 
     return result, stats
 
@@ -180,7 +272,18 @@ def _build_spatial_index(koji_df: pd.DataFrame) -> BallTree:
     return BallTree(coords_rad, metric="haversine")
 
 
-def _load_koji_price_points(path: Path) -> pd.DataFrame:
+def _load_koji_price_points() -> Dict[str, pd.DataFrame]:
+    points_by_year: Dict[str, pd.DataFrame] = {}
+    for config in KOJI_GEOJSON_SOURCES:
+        df = _load_geojson_for_year(config)
+        points_by_year[config["price_column"]] = df
+    if not points_by_year:
+        raise ValueError("No Koji price sources configured.")
+    return points_by_year
+
+
+def _load_geojson_for_year(config: dict) -> pd.DataFrame:
+    path = RAW_KOJI_DIR / config["filename"]
     if not path.exists():
         raise FileNotFoundError(f"Koji price source not found: {path}")
 
@@ -188,6 +291,9 @@ def _load_koji_price_points(path: Path) -> pd.DataFrame:
         geojson = json.load(fp)
 
     records: List[dict] = []
+    price_field_name: str | None = None
+    usage_field_name: str | None = None
+
     for feature in geojson.get("features", []):
         geometry = feature.get("geometry") or {}
         if geometry.get("type") != "Point":
@@ -199,37 +305,92 @@ def _load_koji_price_points(path: Path) -> pd.DataFrame:
         lat = _coerce_float(coordinates[1])
         if lon is None or lat is None:
             continue
+
         props = feature.get("properties") or {}
-        text_values = {
-            column_name: _coerce_str(props.get(raw_field))
-            for column_name, raw_field in KOJI_TEXT_FIELD_MAP
-        }
-        usage_status = text_values.get("koji_usage_status")
-        if usage_status is None or "住宅" not in usage_status:
-            continue
+        keys = tuple(props.keys())
+        if price_field_name is None:
+            price_field_name = _resolve_property_field_name(
+                keys,
+                explicit=config.get("price_field"),
+                candidates=config.get("price_candidates"),
+                keywords=config.get("price_keywords"),
+                column_label=config["price_column"],
+                field_type="price",
+            )
+        if usage_field_name is None:
+            usage_field_name = _resolve_property_field_name(
+                keys,
+                explicit=config.get("usage_field"),
+                candidates=config.get("usage_candidates"),
+                keywords=config.get("usage_keywords"),
+                column_label="koji_usage_code",
+                field_type="usage",
+                allow_missing=True,
+            )
 
         record = {
+            "_coord_key": _format_coord_key(lat, lon),
             "lon": lon,
             "lat": lat,
-            "koji_usage_code": _coerce_str(props.get(KOJI_USAGE_FIELD)),
+            config["price_column"]: _coerce_float(props.get(price_field_name)),
+            config["usage_column"]: _coerce_str(props.get(usage_field_name))
+            if usage_field_name
+            else None,
         }
-        for column_name, raw_field in KOJI_PRICE_FIELD_MAP:
-            record[column_name] = _coerce_float(props.get(raw_field))
-        for column_name, value in text_values.items():
-            record[column_name] = value
+        for column_name, raw_field in KOJI_TEXT_FIELD_MAP:
+            record[column_name] = _coerce_str(props.get(raw_field))
         records.append(record)
 
     if not records:
-        raise ValueError("No valid Koji price points found in GeoJSON.")
+        raise ValueError(f"No valid Koji price points found in {path}.")
 
-    df = pd.DataFrame(records).dropna(subset=["lat", "lon"]).reset_index(drop=True)
-    df["koji_usage_code"] = df["koji_usage_code"].astype("string[python]")
-    for column_name, _ in KOJI_PRICE_FIELD_MAP:
-        df[column_name] = pd.to_numeric(df[column_name], errors="coerce").astype("Float64")
+    df = pd.DataFrame(records)
+    df = df.drop_duplicates(subset="_coord_key", keep="first")
+    df = df.dropna(subset=["lon", "lat"])
+    df = df.reset_index(drop=True)
+    df["lon"] = pd.to_numeric(df["lon"], errors="coerce").astype(float)
+    df["lat"] = pd.to_numeric(df["lat"], errors="coerce").astype(float)
+    df[config["price_column"]] = pd.to_numeric(
+        df[config["price_column"]], errors="coerce"
+    ).astype("Float64")
+    df[config["usage_column"]] = df[config["usage_column"]].astype("string[python]")
     for column_name, _ in KOJI_TEXT_FIELD_MAP:
         df[column_name] = df[column_name].astype("string[python]")
 
     return df
+
+
+def _resolve_property_field_name(
+    available_keys: Sequence[str],
+    *,
+    explicit: str | None,
+    candidates: Sequence[str] | None,
+    keywords: Sequence[str] | None,
+    column_label: str,
+    field_type: str,
+    allow_missing: bool = False,
+) -> str | None:
+    if explicit and explicit in available_keys:
+        return explicit
+    if candidates:
+        for candidate in candidates:
+            if candidate in available_keys:
+                return candidate
+    if keywords:
+        for keyword in keywords:
+            for key in available_keys:
+                if keyword and keyword in key:
+                    return key
+    if allow_missing:
+        return None
+    raise KeyError(
+        f"Unable to locate {field_type} field for {column_label}. "
+        f"explicit={explicit}, candidates={candidates}, keywords={keywords}"
+    )
+
+
+def _format_coord_key(lat: float, lon: float) -> str:
+    return f"{lat:.{COORD_ROUND_DIGITS}f}_{lon:.{COORD_ROUND_DIGITS}f}"
 
 
 def _coerce_float(value) -> float | None:
@@ -245,16 +406,6 @@ def _coerce_str(value) -> str | None:
     if value in (None, "", "_"):
         return None
     return str(value)
-
-
-def _compute_growth(current: np.ndarray, previous: np.ndarray) -> np.ndarray:
-    curr = current.astype(float)
-    prev = previous.astype(float)
-    growth = np.full(curr.shape, np.nan, dtype=float)
-    valid = np.isfinite(curr) & np.isfinite(prev) & (prev != 0)
-    if valid.any():
-        growth[valid] = (curr[valid] - prev[valid]) / prev[valid]
-    return growth
 
 
 __all__ = ["join_koji_price"]
