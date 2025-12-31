@@ -13,6 +13,9 @@ from ..utils.paths import (
     ensure_parent,
     interim_subdir,
 )
+from ..utils.signate_types import TYPE_NAME_MAP
+
+UNKNOWN_TYPE_LABEL = "unknown"
 
 SOURCE_DIR = INTERIM_DIR / "00_assign_data_id"
 OUTPUT_DIR_NAME = "01_tag_id_features"
@@ -88,7 +91,7 @@ def build_tag_id_features(force: bool = True) -> Dict[str, object]:
 
 def _load_source_tables() -> Dict[str, pd.DataFrame]:
     frames: Dict[str, pd.DataFrame] = {}
-    required_columns = ["data_id", *TAG_FEATURES.keys()]
+    required_columns = ["data_id", "bukken_type", *TAG_FEATURES.keys()]
     for dataset_name in ("train", "test"):
         source_path = SOURCE_DIR / f"{dataset_name}.parquet"
         if not source_path.exists():
@@ -96,6 +99,9 @@ def _load_source_tables() -> Dict[str, pd.DataFrame]:
                 f"{source_path} not found. Run assign_data_id before this step."
             )
         df = pd.read_parquet(source_path, columns=required_columns)
+        df["bukken_type"] = (
+            pd.to_numeric(df["bukken_type"], errors="coerce").astype("Int64")
+        )
         for feature in TAG_FEATURES.keys():
             df[feature] = df[feature].astype("string[python]")
         frames[dataset_name] = df
@@ -135,7 +141,10 @@ def _build_catalog_frame(tag_catalog: Dict[str, List[str]]) -> pd.DataFrame:
 def _encode_dataset(
     df: pd.DataFrame, tag_catalog: Dict[str, List[str]]
 ) -> pd.DataFrame:
-    encoded = df[["data_id"]].reset_index(drop=True)
+    encoded = df[["data_id", "bukken_type"]].reset_index(drop=True)
+    encoded["bukken_type_label"] = (
+        _map_bukken_type_labels(df["bukken_type"]).reset_index(drop=True)
+    )
     for feature, meta in TAG_FEATURES.items():
         tags = tag_catalog.get(feature, [])
         block = _encode_feature_block(df[feature], tags, meta["column_prefix"])
@@ -173,6 +182,12 @@ def _split_tag_string(value: object) -> List[str]:
     tokens = str(value).split("/")
     cleaned = [token.strip() for token in tokens if token and token.strip()]
     return cleaned
+
+
+def _map_bukken_type_labels(series: pd.Series) -> pd.Series:
+    labels = series.map(TYPE_NAME_MAP)
+    labels = labels.fillna(UNKNOWN_TYPE_LABEL)
+    return labels.astype("string[python]")
 
 
 def _write_parquet(df: pd.DataFrame, path, *, force: bool) -> None:

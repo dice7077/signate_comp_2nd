@@ -7,12 +7,7 @@ from typing import Dict, List
 import pandas as pd
 
 from ..utils.paths import INTERIM_DIR, PROJECT_ROOT, ensure_parent, interim_subdir
-
-
-TYPE_NAME_MAP = {
-    1202: "kodate",
-    1302: "mansion",
-}
+from ..utils.signate_types import TYPE_NAME_MAP
 
 
 def _load_clean_dataset(dataset_name: str) -> pd.DataFrame:
