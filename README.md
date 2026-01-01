@@ -80,6 +80,7 @@ python scripts/make_submission.py \
 | 0003_school_ele_name | 0004_few_features | 少数特徴 + logターゲットLGBM | 0.1696   |
 | 0004_add_many_feature_baseline | add_many_feature_baseline | 多特徴ベースライン + logターゲットLGBM | 0.1999   |
 | 0005_targetyear_geo_features | 0005_targetyear_geo_features | target-year koji/land + mesh人口4期 (lr=0.1, log target) | 0.1475   |
+| 0006_add_tags   | 0006_add_tags | target-year geo + mesh人口4期 + 指定unit/buildingタグone-hot (lr=0.1, log target) | 0.1447   |
 
 ### 実験一覧（マンション）
 
@@ -97,3 +98,4 @@ python scripts/make_submission.py \
 | 0001_initial      | 0001_initial       | `submissions/submission_kodate0001_mansion0001.csv`   | -            | 初回ベースライン提出 |
 | 0004_few_features | 0002_few_features  | `submissions/submission_kodate0004_mansion0002.csv`   | 17.4984      | log target LGBM few features |
 | 0005_targetyear_geo_features | 0003_targetyear_geo_features | `submissions/submission_kodate0005_mansion0003.csv`   | 15.4122      | target-year geo + mesh人口4期 |
+| 0006_add_tags     | 0004_add_tags      | `submissions/submission_kodate0006_mansion0004.csv`   | 15.0005      | target-year geo + mesh人口4期 + 指定タグone-hot |

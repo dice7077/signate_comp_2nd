@@ -86,6 +86,39 @@ MANSION_TAG_FEATURES: Tuple[str, ...] = (
     MANSION_UNIT_TAG_COLUMNS + MANSION_BUILDING_TAG_COLUMNS
 )
 
+KODATE_UNIT_TAG_COLUMNS: Tuple[str, ...] = (
+    "unit_tag_230401",
+    "unit_tag_223101",
+    "unit_tag_230203",
+    "unit_tag_290101",
+    "unit_tag_230501",
+    "unit_tag_250301",
+    "unit_tag_230601",
+    "unit_tag_230103",
+    "unit_tag_290601",
+    "unit_tag_240201",
+    "unit_tag_220901",
+    "unit_tag_290501",
+    "unit_tag_223201",
+    "unit_tag_230202",
+    "unit_tag_340401",
+)
+
+KODATE_BUILDING_TAG_COLUMNS: Tuple[str, ...] = (
+    "building_tag_340301",
+    "building_tag_210401",
+    "building_tag_294201",
+    "building_tag_334101",
+    "building_tag_334201",
+    "building_tag_334001",
+)
+
+KODATE_TAG_FEATURES: Tuple[str, ...] = (
+    KODATE_UNIT_TAG_COLUMNS + KODATE_BUILDING_TAG_COLUMNS
+)
+
+ALL_TAG_FEATURES: Tuple[str, ...] = MANSION_TAG_FEATURES + KODATE_TAG_FEATURES
+
 FEATURE_PLAN: Dict[str, List[str]] = {
     "kodate": [
         "building_structure",
@@ -189,6 +222,7 @@ FEATURE_PLAN: Dict[str, List[str]] = {
 
 FEATURE_PLAN_OVERRIDES: Dict[Tuple[str, str], List[str]] = {
     ("mansion", "0004_add_tags"): FEATURE_PLAN["mansion"] + list(MANSION_TAG_FEATURES),
+    ("kodate", "0006_add_tags"): FEATURE_PLAN["kodate"] + list(KODATE_TAG_FEATURES),
 }
 
 COLUMN_SOURCES: Dict[str, str] = {
@@ -208,7 +242,7 @@ COLUMN_SOURCES: Dict[str, str] = {
     "land_price": "land",
     "land_usage_code": "land",
     "land_distance_km": "land",
-    **{column: "tags" for column in MANSION_TAG_FEATURES},
+    **{column: "tags" for column in ALL_TAG_FEATURES},
 }
 
 SUPPLEMENTARY_SOURCES: Dict[str, Dict[str, str]] = {
