@@ -20,3 +20,4 @@ pyyaml
 # viz (optional)
 matplotlib
 seaborn
+japanize-matplotlib
