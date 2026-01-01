@@ -70,6 +70,7 @@ python scripts/make_submission.py \
 | 0001_initial    | 0001_initial | LightGBM baseline (kodate) | 0.2615   |
 | 0003_school_ele_name | 0004_few_features | 少数特徴 + logターゲットLGBM | 0.1696   |
 | 0004_add_many_feature_baseline | add_many_feature_baseline | 多特徴ベースライン + logターゲットLGBM | 0.1999   |
+| 0005_targetyear_geo_features | 0005_targetyear_geo_features | target-year koji/land + mesh人口4期 (lr=0.1, log target) | 0.1475   |
 
 ### 実験一覧（マンション）
 

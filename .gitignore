@@ -32,5 +32,8 @@ data/submissions/**
 submissions/
 
 # Experiment artifacts
-experiments/
+experiments/**
+!experiments/**/
+!experiments/**/config.json
+!experiments/**/summary.json
 !experiments/.gitkeep

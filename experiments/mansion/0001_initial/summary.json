@@ -1,0 +1,130 @@
+{
+  "type_label": "mansion",
+  "dataset_version": "0001_initial",
+  "experiment_name": "0001_initial",
+  "description": "LightGBM baseline (mansion)",
+  "created_at": "2026-01-01T02:49:10.623894+00:00",
+  "folds": 5,
+  "random_state": 42,
+  "features": [
+    "target_ym",
+    "lon",
+    "lat",
+    "unit_area_min",
+    "unit_area_max",
+    "room_floor",
+    "balcony_area",
+    "room_count",
+    "2023_koji_price",
+    "mesh_population_2035"
+  ],
+  "metrics": {
+    "overall": {
+      "mape": 0.23708331238111402,
+      "mae": 5503197.638413838,
+      "rmse": 9027432.87082862
+    },
+    "folds": [
+      {
+        "fold": 1,
+        "rows_train": 158891,
+        "rows_valid": 39723,
+        "best_iteration": 4000,
+        "mape": 0.2378565660609916,
+        "mae": 5580866.366441572,
+        "rmse": 9263539.573749593,
+        "train_time_sec": 44.52323133400205
+      },
+      {
+        "fold": 2,
+        "rows_train": 158891,
+        "rows_valid": 39723,
+        "best_iteration": 4000,
+        "mape": 0.23683489963371537,
+        "mae": 5537909.166929253,
+        "rmse": 9224083.388522062,
+        "train_time_sec": 46.02289504199871
+      },
+      {
+        "fold": 3,
+        "rows_train": 158891,
+        "rows_valid": 39723,
+        "best_iteration": 4000,
+        "mape": 0.24047477644450124,
+        "mae": 5522782.743154929,
+        "rmse": 8936938.931252742,
+        "train_time_sec": 43.63706858299702
+      },
+      {
+        "fold": 4,
+        "rows_train": 158891,
+        "rows_valid": 39723,
+        "best_iteration": 4000,
+        "mape": 0.23749793289745513,
+        "mae": 5465027.345006541,
+        "rmse": 8833401.499443134,
+        "train_time_sec": 43.34954566699889
+      },
+      {
+        "fold": 5,
+        "rows_train": 158892,
+        "rows_valid": 39722,
+        "best_iteration": 4000,
+        "mape": 0.23275227783800403,
+        "mae": 5409400.209249253,
+        "rmse": 8870056.98829412,
+        "train_time_sec": 45.063291250000475
+      }
+    ]
+  },
+  "artifacts": {
+    "metrics": "experiments/mansion/0001_initial/artifacts/reports/metrics.json",
+    "oof_predictions": "experiments/mansion/0001_initial/artifacts/predictions/oof_predictions.parquet",
+    "test_predictions": "experiments/mansion/0001_initial/artifacts/predictions/test_predictions.parquet",
+    "feature_importance": "experiments/mansion/0001_initial/artifacts/reports/feature_importance.csv",
+    "feature_importance_by_fold": "experiments/mansion/0001_initial/artifacts/reports/feature_importance_by_fold.csv",
+    "plots": {
+      "oof_scatter": "experiments/mansion/0001_initial/artifacts/plots/oof_scatter.png",
+      "residual_hist": "experiments/mansion/0001_initial/artifacts/plots/residual_hist.png",
+      "fold_mape": "experiments/mansion/0001_initial/artifacts/plots/fold_mape.png"
+    },
+    "models": [
+      "experiments/mansion/0001_initial/artifacts/models/fold_1.txt",
+      "experiments/mansion/0001_initial/artifacts/models/fold_2.txt",
+      "experiments/mansion/0001_initial/artifacts/models/fold_3.txt",
+      "experiments/mansion/0001_initial/artifacts/models/fold_4.txt",
+      "experiments/mansion/0001_initial/artifacts/models/fold_5.txt"
+    ]
+  },
+  "paths": {
+    "experiment_dir": "experiments/mansion/0001_initial",
+    "dataset_dir": "data/processed/0002_mansion/0001_initial"
+  },
+  "config": {
+    "type_label": "mansion",
+    "dataset_version": "0001_initial",
+    "experiment_name": "0001_initial",
+    "description": "LightGBM baseline (mansion)",
+    "folds": 5,
+    "random_state": 42,
+    "num_boost_round": 4000,
+    "early_stopping_rounds": 200,
+    "lightgbm_params": {
+      "objective": "regression_l1",
+      "metric": "mae",
+      "learning_rate": 0.05,
+      "num_leaves": 63,
+      "max_depth": -1,
+      "feature_fraction": 0.9,
+      "bagging_fraction": 0.9,
+      "bagging_freq": 1,
+      "min_data_in_leaf": 40,
+      "lambda_l1": 0.0,
+      "lambda_l2": 0.0,
+      "seed": 42,
+      "verbosity": -1
+    },
+    "target_column": "money_room",
+    "id_column": "data_id"
+  }
+}

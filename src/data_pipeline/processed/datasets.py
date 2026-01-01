@@ -143,8 +143,16 @@ FEATURE_PLAN: Dict[str, List[str]] = {
         "lat",
         "unit_area_min",
         "unit_area_max",
-        "2023_koji_price",
+        "koji_price",
+        "koji_usage_code",
+        "koji_distance_km",
+        "land_price",
+        "land_usage_code",
+        "land_distance_km",
+        "mesh_population_2025",
         "mesh_population_2035",
+        "mesh_population_2045",
+        "mesh_population_2055",
     ],
 }
 
