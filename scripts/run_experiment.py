@@ -25,8 +25,12 @@ def parse_args() -> argparse.Namespace:
         description="5fold CVでLightGBMを学習し、結果を experiments/ 以下に保存する。",
     )
     parser.add_argument(
+        "--config",
+        help="ExperimentConfig を JSON/YAML で記述したファイルのパス。"
+        " 指定した場合、その他の構成オプションはファイル内容を利用する。",
+    )
+    parser.add_argument(
         "--type",
-        required=True,
         choices=sorted(TYPE_DIRECTORIES.keys()),
         help="学習対象タイプ（kodate/mansion）。",
     )
@@ -37,12 +41,10 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--experiment-name",
-        required=True,
         help="実験名（例: 0001_initial）。",
     )
     parser.add_argument(
         "--description",
-        required=True,
         help="実験の簡潔な説明。",
     )
     parser.add_argument(
@@ -111,6 +113,20 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+
+    if args.config:
+        try:
+            config = _load_config_from_file(args.config)
+        except (OSError, ValueError, ExperimentError) as exc:
+            print(f"[ERROR] {exc}", file=sys.stderr)
+            raise SystemExit(2) from exc
+        result = _run_with_config(config, overwrite=args.overwrite)
+        snapshot_code(result, Path(__file__), vars(args))
+        print_summary(result)
+        return
+
+    _ensure_cli_requirements(args)
+
     try:
         param_overrides = _parse_param_overrides(args.param)
     except ValueError as exc:
@@ -147,6 +163,48 @@ def main() -> None:
 
     snapshot_code(result, Path(__file__), vars(args))
     print_summary(result)
+
+
+def _load_config_from_file(path_str: str) -> ExperimentConfig:
+    path = Path(path_str)
+    if not path.is_absolute():
+        path = PROJECT_ROOT / path
+    if not path.exists():
+        raise ExperimentError(f"configファイルが見つかりません: {path}")
+    suffix = path.suffix.lower()
+    if suffix in {".yaml", ".yml"}:
+        with path.open("r", encoding="utf-8") as fp:
+            payload = yaml.safe_load(fp)
+    else:
+        with path.open("r", encoding="utf-8") as fp:
+            payload = json.load(fp)
+    if not isinstance(payload, dict):
+        raise ValueError(f"configファイルの形式が不正です: {path}")
+    try:
+        return ExperimentConfig(**payload)
+    except TypeError as exc:
+        raise ValueError(f"configファイルを ExperimentConfig に変換できません: {path}") from exc
+
+
+def _run_with_config(config: ExperimentConfig, overwrite: bool) -> ExperimentResult:
+    try:
+        return run_experiment(config, overwrite=overwrite)
+    except ExperimentError as exc:
+        print(f"[ERROR] {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+
+
+def _ensure_cli_requirements(args: argparse.Namespace) -> None:
+    missing = []
+    if not args.type:
+        missing.append("--type")
+    if not args.experiment_name:
+        missing.append("--experiment-name")
+    if not args.description:
+        missing.append("--description")
+    if missing:
+        joined = ", ".join(missing)
+        raise SystemExit(f"これらのオプションを指定してください: {joined}")
 
 
 def _parse_param_overrides(entries: list[str]) -> Dict[str, Any]:

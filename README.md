@@ -38,6 +38,15 @@ python scripts/run_experiment.py \
   --early-stopping-rounds 200
 ```
 
+設定ファイル（`ExperimentConfig` JSON/YAML）経由で同じことを行う場合は `--config` を使う。CLI引数よりファイル内容が優先され、`--overwrite` などのフラグだけ任意に追加できる。
+
+```
+source .venv/bin/activate
+python scripts/run_experiment.py \
+  --config experiments/mansion/0004_add_tags/config.json \
+  --overwrite
+```
+
 主な成果物:
 
 - `artifacts/predictions/oof_predictions.parquet` / `test_predictions.parquet`
@@ -79,6 +88,7 @@ python scripts/make_submission.py \
 | 0001_initial    | 0001_initial | LightGBM baseline (mansion) | 0.2371   |
 | 0002_few_features | 0002_few_features | 少数特徴 + logターゲットLGBM (lr=0.1) | 0.1246   |
 | 0003_targetyear_geo_features | 0003_targetyear_geo_features | target-year koji/land + mesh人口4期 (lr=0.1, log target) | 0.1127   |
+| 0004_add_tags   | 0004_add_tags | target-year geo + mesh人口4期 + 指定unit/buildingタグone-hot (lr=0.1, log target) | 0.1098   |
 
 ### 提出一覧
 

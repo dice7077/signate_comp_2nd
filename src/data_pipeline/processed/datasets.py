@@ -55,6 +55,37 @@ TARGET_YEAR_FEATURE_SPECS: Dict[str, Dict[str, object]] = {
     },
 }
 
+MANSION_UNIT_TAG_COLUMNS: Tuple[str, ...] = (
+    "unit_tag_230401",
+    "unit_tag_220301",
+    "unit_tag_230203",
+    "unit_tag_223101",
+    "unit_tag_230501",
+    "unit_tag_340401",
+    "unit_tag_230601",
+    "unit_tag_250301",
+    "unit_tag_240201",
+    "unit_tag_340201",
+    "unit_tag_331001",
+    "unit_tag_340101",
+    "unit_tag_290201",
+)
+
+MANSION_BUILDING_TAG_COLUMNS: Tuple[str, ...] = (
+    "building_tag_310101",
+    "building_tag_321101",
+    "building_tag_334101",
+    "building_tag_330101",
+    "building_tag_320401",
+    "building_tag_334201",
+    "building_tag_433301",
+    "building_tag_310401",
+)
+
+MANSION_TAG_FEATURES: Tuple[str, ...] = (
+    MANSION_UNIT_TAG_COLUMNS + MANSION_BUILDING_TAG_COLUMNS
+)
+
 FEATURE_PLAN: Dict[str, List[str]] = {
     "kodate": [
         "building_structure",
@@ -156,6 +187,10 @@ FEATURE_PLAN: Dict[str, List[str]] = {
     ],
 }
 
+FEATURE_PLAN_OVERRIDES: Dict[Tuple[str, str], List[str]] = {
+    ("mansion", "0004_add_tags"): FEATURE_PLAN["mansion"] + list(MANSION_TAG_FEATURES),
+}
+
 COLUMN_SOURCES: Dict[str, str] = {
     "2023_land_price": "land",
     "2023_land_usage_code": "land",
@@ -173,6 +208,7 @@ COLUMN_SOURCES: Dict[str, str] = {
     "land_price": "land",
     "land_usage_code": "land",
     "land_distance_km": "land",
+    **{column: "tags" for column in MANSION_TAG_FEATURES},
 }
 
 SUPPLEMENTARY_SOURCES: Dict[str, Dict[str, str]] = {
@@ -190,6 +226,11 @@ SUPPLEMENTARY_SOURCES: Dict[str, Dict[str, str]] = {
         "dir": "04_01_join_population_projection",
         "train": "train_population_features.parquet",
         "test": "test_population_features.parquet",
+    },
+    "tags": {
+        "dir": "02_01_build_tag_id_features",
+        "train": "train_tag_ids.parquet",
+        "test": "test_tag_ids.parquet",
     },
 }
 
@@ -212,7 +253,7 @@ def build_processed_datasets(
     outputs: List[Path] = []
 
     for type_label in selected_types:
-        features = FEATURE_PLAN[type_label]
+        features = _resolve_feature_plan(type_label, version)
         version_dir = PROCESSED_ROOT / TYPE_DIRECTORIES[type_label] / version
         version_dir.mkdir(parents=True, exist_ok=True)
         split_meta: Dict[str, dict] = {}
@@ -265,6 +306,13 @@ def _normalize_types(types: Sequence[str] | None) -> List[str]:
         if type_label not in normalized:
             normalized.append(type_label)
     return normalized
+
+
+def _resolve_feature_plan(type_label: str, version: str) -> List[str]:
+    override = FEATURE_PLAN_OVERRIDES.get((type_label, version))
+    if override is not None:
+        return list(override)
+    return list(FEATURE_PLAN[type_label])
 
 
 def _load_base_dataframe(split: str, type_label: str, features: Sequence[str]) -> pd.DataFrame:
