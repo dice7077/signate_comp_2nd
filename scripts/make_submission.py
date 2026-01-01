@@ -98,16 +98,26 @@ def _load_predictions(path: Path) -> pd.DataFrame:
 def _load_sample(path: Path) -> pd.DataFrame:
     if not path.exists():
         raise FileNotFoundError(path)
+
+    def _read_without_header() -> pd.DataFrame:
+        df = pd.read_csv(path, header=None)
+        if df.shape[1] < 2:
+            raise ValueError(f"{path} の列数が不足しています。")
+        df = df.iloc[:, :2].copy()
+        df.columns = ["id", "money_room"]
+        return df
+
     try:
         df = pd.read_csv(path)
     except pd.errors.ParserError:
-        df = pd.read_csv(path, header=None)
-
-    if df.shape[1] < 2:
-        df = pd.read_csv(path, header=None, names=["id", "money_room"])
-    elif "id" not in df.columns or "money_room" not in df.columns:
-        df = df.iloc[:, :2]
-        df.columns = ["id", "money_room"]
+        df = _read_without_header()
+    else:
+        if df.shape[1] < 2:
+            df = _read_without_header()
+        elif {"id", "money_room"}.issubset(df.columns):
+            df = df.loc[:, ["id", "money_room"]].copy()
+        else:
+            df = _read_without_header()
 
     df = df[["id", "money_room"]].copy()
     df["id"] = df["id"].astype(str).str.zfill(6)

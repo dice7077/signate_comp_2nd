@@ -83,3 +83,4 @@ python scripts/make_submission.py \
 | Kodate Experiment | Mansion Experiment | Submission Path                                       | Public Score | Notes                |
 |-------------------|--------------------|-------------------------------------------------------|--------------|----------------------|
 | 0001_initial      | 0001_initial       | `submissions/submission_kodate0001_mansion0001.csv`   | -            | 初回ベースライン提出 |
+| 0004_few_features | 0002_few_features  | `submissions/submission_kodate0004_mansion0002.csv`   | 17.4984      | log target LGBM few features |
