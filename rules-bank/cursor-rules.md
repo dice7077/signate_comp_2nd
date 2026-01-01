@@ -5,5 +5,6 @@
 - 決定的なパイプラインステップが `data/interim` に Parquet を出力するたび、同じディレクトリ構成を踏襲した検査ノートブックを `notebooks/data/...` に用意し、形状・スキーマ・先頭データを確認できるようにする。
 - 検査ノートブックでは列を行に転置した状態でおおよそ 20 行を表示し、`pd.options.display.max_rows` を少なくとも 400 に設定して縦方向のトリミングを避ける。
 - Cursor 上で自動化を実行する際は `.venv` を作成・有効化し（`python3 -m venv .venv` → `source .venv/bin/activate` → `pip install -r requirements.txt` with `required_permissions: ['all']`）、以降のパイプライン実行では常に `.venv/bin/python` を使ってモジュール不足を防ぐ。この際、sandboxを使用すると失敗するので、sandbox外で行うこと。
+- 学習ジョブはユーザーが別ターミナルで実行する。Cursor からは実行せず、必要なコマンドをコピペできる形で提示すること。
 
 
