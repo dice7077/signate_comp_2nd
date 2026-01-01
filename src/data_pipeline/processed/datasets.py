@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Sequence
+from typing import Dict, List, Sequence, Tuple, cast
 
 import pandas as pd
 
@@ -16,6 +16,43 @@ SPLIT_BASE_DIR = INTERIM_DIR / "01_02_split_by_type"
 TYPE_DIRECTORIES: Dict[str, str] = {
     "kodate": "0001_kodate",
     "mansion": "0002_mansion",
+}
+
+AUXILIARY_BASE_COLUMNS: Tuple[str, ...] = ("target_ym",)
+KOJI_YEARS: Tuple[int, ...] = (2023, 2022, 2021, 2020, 2019, 2018)
+LAND_YEARS: Tuple[int, ...] = (2023, 2022, 2021, 2020, 2019)
+
+TARGET_YEAR_FEATURE_SPECS: Dict[str, Dict[str, object]] = {
+    "koji_price": {
+        "source": "koji",
+        "dtype": "Float64",
+        "year_columns": {year: f"{year}_koji_price" for year in KOJI_YEARS},
+    },
+    "koji_usage_code": {
+        "source": "koji",
+        "dtype": "string[python]",
+        "year_columns": {year: f"{year}_koji_usage_code" for year in KOJI_YEARS},
+    },
+    "koji_distance_km": {
+        "source": "koji",
+        "dtype": "Float64",
+        "year_columns": {year: f"{year}_koji_distance_km" for year in KOJI_YEARS},
+    },
+    "land_price": {
+        "source": "land",
+        "dtype": "Float64",
+        "year_columns": {year: f"{year}_land_price" for year in LAND_YEARS},
+    },
+    "land_usage_code": {
+        "source": "land",
+        "dtype": "string[python]",
+        "year_columns": {year: f"{year}_land_usage_code" for year in LAND_YEARS},
+    },
+    "land_distance_km": {
+        "source": "land",
+        "dtype": "Float64",
+        "year_columns": {year: f"{year}_land_distance_km" for year in LAND_YEARS},
+    },
 }
 
 FEATURE_PLAN: Dict[str, List[str]] = {
@@ -59,6 +96,16 @@ FEATURE_PLAN: Dict[str, List[str]] = {
         "school_ele_distance",
         "convenience_distance",
         "super_distance",
+        "koji_price",
+        "koji_usage_code",
+        "koji_distance_km",
+        "land_price",
+        "land_usage_code",
+        "land_distance_km",
+        "mesh_population_2025",
+        "mesh_population_2035",
+        "mesh_population_2045",
+        "mesh_population_2055",
     ],
     "mansion": [
         "building_structure",
@@ -110,6 +157,14 @@ COLUMN_SOURCES: Dict[str, str] = {
     "2023_koji_distance_km": "koji",
     "mesh_population_2025": "population",
     "mesh_population_2035": "population",
+    "mesh_population_2045": "population",
+    "mesh_population_2055": "population",
+    "koji_price": "koji",
+    "koji_usage_code": "koji",
+    "koji_distance_km": "koji",
+    "land_price": "land",
+    "land_usage_code": "land",
+    "land_distance_km": "land",
 }
 
 SUPPLEMENTARY_SOURCES: Dict[str, Dict[str, str]] = {
@@ -163,6 +218,7 @@ def build_processed_datasets(
 
             df = _load_base_dataframe(split, type_label, features)
             df = _merge_supplementary_features(df, split, features)
+            df = _apply_target_year_alignment(df)
 
             columns = _output_columns(split, features)
             missing = [col for col in columns if col not in df.columns]
@@ -206,10 +262,13 @@ def _normalize_types(types: Sequence[str] | None) -> List[str]:
 def _load_base_dataframe(split: str, type_label: str, features: Sequence[str]) -> pd.DataFrame:
     path = SPLIT_BASE_DIR / f"{split}_{type_label}.parquet"
     base_columns = _base_feature_columns(features)
-    columns = ["data_id", *base_columns]
+    columns = ["data_id"]
     if split == "train":
-        columns.insert(1, "money_room")
-    return pd.read_parquet(path, columns=columns)
+        columns.append("money_room")
+    columns.extend(AUXILIARY_BASE_COLUMNS)
+    columns.extend(base_columns)
+    ordered_columns = list(dict.fromkeys(columns))
+    return pd.read_parquet(path, columns=ordered_columns)
 
 
 def _base_feature_columns(features: Sequence[str]) -> List[str]:
@@ -254,8 +313,64 @@ def _supplementary_feature_map(features: Sequence[str]) -> Dict[str, List[str]]:
 def _load_supplementary(source: str, split: str, columns: Sequence[str]) -> pd.DataFrame:
     config = SUPPLEMENTARY_SOURCES[source]
     path = INTERIM_DIR / config["dir"] / config[split]
-    read_columns = ["data_id", *columns]
+    read_columns = ["data_id", *_expand_supplementary_columns(source, columns)]
     return pd.read_parquet(path, columns=read_columns)
+
+
+def _expand_supplementary_columns(source: str, columns: Sequence[str]) -> List[str]:
+    expanded: List[str] = []
+    for column in columns:
+        spec = TARGET_YEAR_FEATURE_SPECS.get(column)
+        if spec and spec["source"] == source:
+            expanded.extend(spec["year_columns"].values())
+        else:
+            expanded.append(column)
+    # 順序を維持したまま重複排除
+    ordered: List[str] = []
+    seen = set()
+    for column in expanded:
+        if column in seen:
+            continue
+        seen.add(column)
+        ordered.append(column)
+    return ordered
+
+
+def _apply_target_year_alignment(df: pd.DataFrame) -> pd.DataFrame:
+    if "target_ym" not in df.columns:
+        return df
+
+    target_year = _extract_target_year(df["target_ym"])
+    if target_year.isna().all():
+        return df
+
+    for feature, spec in TARGET_YEAR_FEATURE_SPECS.items():
+        year_columns = cast(Dict[int, str], spec["year_columns"])
+        dtype = cast(str, spec["dtype"])
+        available = {year: col for year, col in year_columns.items() if col in df.columns}
+        if not available:
+            continue
+        if feature not in df.columns:
+            df[feature] = pd.Series(pd.NA, dtype=dtype, index=df.index)
+        else:
+            df[feature] = df[feature].astype(dtype)
+        for year, column_name in available.items():
+            mask = target_year == year
+            if not mask.any():
+                continue
+            df.loc[mask, feature] = df.loc[mask, column_name]
+    return df
+
+
+def _extract_target_year(target_ym: pd.Series) -> pd.Series:
+    numeric = pd.to_numeric(target_ym, errors="coerce")
+    years = pd.Series(pd.NA, dtype="Int64", index=target_ym.index)
+    valid = pd.notna(numeric)
+    if not valid.any():
+        return years
+    numeric_valid = numeric.loc[valid].astype("int64")
+    years.loc[valid] = (numeric_valid // 100).astype("Int64")
+    return years
 
 
 def _output_columns(split: str, features: Sequence[str]) -> List[str]:
