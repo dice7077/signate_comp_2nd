@@ -30,3 +30,7 @@ data/submissions/**
 
 # Submission CSVs (if staged outside the data tree)
 submissions/
+
+# Experiment artifacts
+experiments/
+!experiments/.gitkeep
