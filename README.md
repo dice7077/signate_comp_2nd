@@ -78,6 +78,7 @@ python scripts/make_submission.py \
 |-----------------|--------------|-----------------------------|----------|
 | 0001_initial    | 0001_initial | LightGBM baseline (mansion) | 0.2371   |
 | 0002_few_features | 0002_few_features | 少数特徴 + logターゲットLGBM (lr=0.1) | 0.1246   |
+| 0003_targetyear_geo_features | 0003_targetyear_geo_features | target-year koji/land + mesh人口4期 (lr=0.1, log target) | 0.1127   |
 
 ### 提出一覧
 
@@ -85,3 +86,4 @@ python scripts/make_submission.py \
 |-------------------|--------------------|-------------------------------------------------------|--------------|----------------------|
 | 0001_initial      | 0001_initial       | `submissions/submission_kodate0001_mansion0001.csv`   | -            | 初回ベースライン提出 |
 | 0004_few_features | 0002_few_features  | `submissions/submission_kodate0004_mansion0002.csv`   | 17.4984      | log target LGBM few features |
+| 0005_targetyear_geo_features | 0003_targetyear_geo_features | `submissions/submission_kodate0005_mansion0003.csv`   | 15.4122      | target-year geo + mesh人口4期 |
