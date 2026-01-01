@@ -86,7 +86,8 @@
     "plots": {
       "oof_scatter": "experiments/mansion/0001_initial/artifacts/plots/oof_scatter.png",
       "residual_hist": "experiments/mansion/0001_initial/artifacts/plots/residual_hist.png",
-      "fold_mape": "experiments/mansion/0001_initial/artifacts/plots/fold_mape.png"
+      "fold_mape": "experiments/mansion/0001_initial/artifacts/plots/fold_mape.png",
+      "oof_scatter_loglog": "experiments/mansion/0001_initial/artifacts/plots/oof_scatter_loglog.png"
     },
     "models": [
       "experiments/mansion/0001_initial/artifacts/models/fold_1.txt",

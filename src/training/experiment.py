@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Sequence
 import lightgbm as lgb
 import matplotlib
 import matplotlib.pyplot as plt
+from matplotlib.ticker import LogLocator
 import numpy as np
 import pandas as pd
 from pandas.api.types import CategoricalDtype
@@ -422,11 +423,13 @@ def _create_plots(
 ) -> Dict[str, Path]:
     plots_dir.mkdir(parents=True, exist_ok=True)
     scatter_path = plots_dir / "oof_scatter.png"
+    log_scatter_path = plots_dir / "oof_scatter_loglog.png"
     residual_path = plots_dir / "residual_hist.png"
     fold_bar_path = plots_dir / "fold_mape.png"
     fi_path = plots_dir / "feature_importance.png"
 
     _plot_scatter(y_true, y_pred, scatter_path, type_label, experiment_name)
+    _plot_scatter_loglog(y_true, y_pred, log_scatter_path, type_label, experiment_name)
     _plot_residuals(y_true, y_pred, residual_path, type_label, experiment_name)
     _plot_fold_mape(fold_metrics, fold_bar_path, type_label, experiment_name)
     fi_available = aggregated_importance is not None and not aggregated_importance.empty
@@ -435,6 +438,7 @@ def _create_plots(
 
     return {
         "oof_scatter": scatter_path,
+        "oof_scatter_loglog": log_scatter_path,
         "residual_hist": residual_path,
         "fold_mape": fold_bar_path,
         **({"feature_importance": fi_path} if fi_available else {}),
@@ -444,11 +448,73 @@ def _create_plots(
 def _plot_scatter(y_true: np.ndarray, y_pred: np.ndarray, path: Path, type_label: str, exp: str) -> None:
     plt.figure(figsize=(6, 6))
     sns.scatterplot(x=y_true, y=y_pred, s=10, alpha=0.3, edgecolor=None)
-    max_val = np.percentile(np.concatenate([y_true, y_pred]), 99.5)
-    plt.plot([0, max_val], [0, max_val], color="red", linestyle="--", label="y=x")
+    all_vals = np.concatenate([y_true, y_pred])
+    min_val = np.min(all_vals)
+    max_val = np.max(all_vals)
+    pad = max(1e-6, 0.05 * (max_val - min_val))
+    lower = max(0.0, min_val - pad)
+    upper = max_val + pad
+    plt.plot([lower, upper], [lower, upper], color="red", linestyle="--", label="y=x")
     plt.xlabel("Actual money_room")
     plt.ylabel("Predicted money_room")
     plt.title(f"{type_label}::{exp} OOF actual vs. predicted")
+    plt.legend()
+    plt.tight_layout()
+    plt.xlim(lower, upper)
+    plt.ylim(lower, upper)
+    plt.savefig(path, dpi=200)
+    plt.close()
+
+
+def _plot_scatter_loglog(
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    path: Path,
+    type_label: str,
+    exp: str,
+    min_percentile: float = 0.0,
+    max_percentile: float = 100.0,
+    eps: float = 1e-6,
+) -> None:
+    y_true = np.asarray(y_true, dtype=float)
+    y_pred = np.asarray(y_pred, dtype=float)
+    mask = (y_true > 0) & (y_pred > 0)
+    if not np.any(mask):
+        # 正の値がない場合は通常の散布図を保存する（単調増加の確認を優先）
+        _plot_scatter(y_true, y_pred, path, type_label, exp)
+        return
+
+    y_true_pos = np.clip(y_true[mask], eps, None)
+    y_pred_pos = np.clip(y_pred[mask], eps, None)
+
+    plt.figure(figsize=(6, 6))
+    sns.scatterplot(x=y_true_pos, y=y_pred_pos, s=10, alpha=0.3, edgecolor=None)
+
+    all_vals = np.concatenate([y_true_pos, y_pred_pos])
+    min_val = max(np.percentile(all_vals, min_percentile), eps)
+    max_val = np.percentile(all_vals, max_percentile)
+    if max_val <= min_val:
+        max_val = min_val * 10
+
+    pad_ratio = 0.15
+    lower = max(min_val / (1 + pad_ratio), eps)
+    upper = max_val * (1 + pad_ratio)
+
+    plt.plot([lower, upper], [lower, upper], color="red", linestyle="--", label="y=x")
+    plt.xscale("log")
+    plt.yscale("log")
+    plt.xlim(lower, upper)
+    plt.ylim(lower, upper)
+    ax = plt.gca()
+    ax.xaxis.set_major_locator(LogLocator(base=10.0, subs=(1.0,), numticks=12))
+    ax.xaxis.set_minor_locator(LogLocator(base=10.0, subs=tuple(range(2, 10)), numticks=100))
+    ax.yaxis.set_major_locator(LogLocator(base=10.0, subs=(1.0,), numticks=12))
+    ax.yaxis.set_minor_locator(LogLocator(base=10.0, subs=tuple(range(2, 10)), numticks=100))
+    ax.grid(which="major", linestyle="-", linewidth=0.6, alpha=0.7)
+    ax.grid(which="minor", linestyle="--", linewidth=0.4, alpha=0.4)
+    plt.xlabel("Actual money_room (log scale)")
+    plt.ylabel("Predicted money_room (log scale)")
+    plt.title(f"{type_label}::{exp} OOF actual vs. predicted (log-log)")
     plt.legend()
     plt.tight_layout()
     plt.savefig(path, dpi=200)

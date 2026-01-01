@@ -137,7 +137,8 @@
       "oof_scatter": "experiments/kodate/0006_add_tags/artifacts/plots/oof_scatter.png",
       "residual_hist": "experiments/kodate/0006_add_tags/artifacts/plots/residual_hist.png",
       "fold_mape": "experiments/kodate/0006_add_tags/artifacts/plots/fold_mape.png",
-      "feature_importance": "experiments/kodate/0006_add_tags/artifacts/plots/feature_importance.png"
+      "feature_importance": "experiments/kodate/0006_add_tags/artifacts/plots/feature_importance.png",
+      "oof_scatter_loglog": "experiments/kodate/0006_add_tags/artifacts/plots/oof_scatter_loglog.png"
     },
     "models": [
       "experiments/kodate/0006_add_tags/artifacts/models/fold_1.txt",

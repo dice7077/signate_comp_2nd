@@ -11,7 +11,7 @@ from ..utils.paths import DATA_DIR, INTERIM_DIR, PROJECT_ROOT
 
 
 PROCESSED_ROOT = DATA_DIR / "processed"
-SPLIT_BASE_DIR = INTERIM_DIR / "01_02_split_by_type"
+SPLIT_BASE_DIR = INTERIM_DIR / "01_03_adjust_mansion_unit_area"
 
 TYPE_DIRECTORIES: Dict[str, str] = {
     "kodate": "0001_kodate",
@@ -185,6 +185,7 @@ FEATURE_PLAN: Dict[str, List[str]] = {
         "dwelling_unit_window_angle",
         "room_count",
         "unit_area",
+        "unit_house_area_adjusted",
         "floor_plan_code",
         "flg_investment",
         "post1",

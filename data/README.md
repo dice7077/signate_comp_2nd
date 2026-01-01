@@ -17,6 +17,7 @@ raw/signate/{train,test}.csv
                                    ├─▶ 03_01_join_koji_price/{train,test}.parquet
                                    └─▶ 01_01_drop_sparse_columns/{train,test}.parquet
                                              ├─▶ 01_02_split_by_type/{train,test}_{kodate,mansion}.parquet
+                                             │        └─▶ 01_03_adjust_mansion_unit_area/{train,test}_{kodate,mansion}.parquet
                                              └─▶ 04_01_join_population_projection/{train,test}_population_features.parquet
 
 raw/population/mesh1km_2024 → lookup_population_mesh/mesh1km_population.parquet
@@ -32,6 +33,7 @@ raw/population/mesh1km_2024 → lookup_population_mesh/mesh1km_population.parque
 | `drop_sparse_columns` | `00_01_assign_data_id` | 欠損率99%以上の列（13列）を除去 | `interim/01_01_drop_sparse_columns/{train,test}.parquet` |
 | `join_population_projection` | `01_01_drop_sparse_columns`, `lookup_population_mesh/mesh1km_population.parquet` | lon/latから1kmメッシュを求め、将来人口(2025-2055)を data_id 枝として出力 | `interim/04_01_join_population_projection/{train,test}_population_features.parquet` |
 | `split_signate_by_type` | `01_01_drop_sparse_columns` | `bukken_type`（1202=戸建, 1302=マンション）別に分割 | `interim/01_02_split_by_type/{train,test}_{kodate,mansion}.parquet` |
+| `adjust_mansion_unit_area` | `01_02_split_by_type` | マンション行のみ `unit_area` と `house_area` を統合し、外れ値を補正した `unit_house_area_adjusted` を付与 | `interim/01_03_adjust_mansion_unit_area/{train,test}_{kodate,mansion}.parquet` |
 
 補足:
 

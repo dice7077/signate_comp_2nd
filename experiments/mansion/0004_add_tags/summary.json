@@ -143,7 +143,8 @@
       "oof_scatter": "experiments/mansion/0004_add_tags/artifacts/plots/oof_scatter.png",
       "residual_hist": "experiments/mansion/0004_add_tags/artifacts/plots/residual_hist.png",
       "fold_mape": "experiments/mansion/0004_add_tags/artifacts/plots/fold_mape.png",
-      "feature_importance": "experiments/mansion/0004_add_tags/artifacts/plots/feature_importance.png"
+      "feature_importance": "experiments/mansion/0004_add_tags/artifacts/plots/feature_importance.png",
+      "oof_scatter_loglog": "experiments/mansion/0004_add_tags/artifacts/plots/oof_scatter_loglog.png"
     },
     "models": [
       "experiments/mansion/0004_add_tags/artifacts/models/fold_1.txt",

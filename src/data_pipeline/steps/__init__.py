@@ -1,5 +1,6 @@
 from collections import OrderedDict
 
+from .adjust_mansion_unit_area import adjust_mansion_unit_area
 from .assign_data_id import assign_data_id
 from .build_tag_id_features import build_tag_id_features
 from .drop_sparse_columns import drop_sparse_columns
@@ -17,6 +18,7 @@ _STEP_FUNCTIONS = {
     "join_population_projection": join_population_projection,
     "split_signate_by_type": split_signate_by_type,
     "build_tag_id_features": build_tag_id_features,
+    "adjust_mansion_unit_area": adjust_mansion_unit_area,
 }
 
 STEP_REGISTRY = OrderedDict(
@@ -24,6 +26,7 @@ STEP_REGISTRY = OrderedDict(
 )
 
 __all__ = [
+    "adjust_mansion_unit_area",
     "assign_data_id",
     "build_tag_id_features",
     "join_koji_price",
