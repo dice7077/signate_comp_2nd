@@ -11,7 +11,7 @@
 ## 利用可能なステップ
 
 - `assign_data_id`: Signate の `train.csv` / `test.csv` を読み込み、`data_id` 列を付与（train は `0..N-1`、test は既存の `id` を使用）し、`data/interim/00_01_assign_data_id/{train,test}.parquet` を生成。
-- `drop_sparse_columns`: `00_01_assign_data_id` の出力を受け取り、train/test ともに欠損率 99% 超のカラムを削除して `data/interim/01_01_drop_sparse_columns/{train,test}.parquet` を生成。
+- `drop_sparse_columns`: `00_01_assign_data_id` の出力を受け取り、train/test ともに欠損率 99% 超のカラムを削除して `data/interim/01_01_drop_sparse_columns/{train,test}.parquet` を生成。あわせて `target_ym`・`year_built` から算出する `years_old` と、`post1/post2`・`addr1_1/addr1_2` のゼロ埋め連結 (`post_all`, `addr_all`) も付与する。
 - `split_signate_by_type`: `01_01_drop_sparse_columns` の出力を読み込み、`bukken_type`（1202=戸建、1302=マンション）ごとに分割し、`data/interim/01_02_split_by_type/` に 4 ファイルを書き出し。
 - `build_tag_id_features`: `00_01_assign_data_id` の出力から `unit_tag_id` / `building_tag_id` / `statuses` の `/` 区切りコードをユニーク化し、`tag_ids.parquet`（feature_name と tag_id の対応表）と、`unit_tag_<code>` / `building_tag_<code>` / `status_tag_<code>` を横持ちした `train_tag_ids.parquet`・`test_tag_ids.parquet` を `data/interim/02_01_build_tag_id_features/` に生成。
 - `join_koji_price`: `00_01_assign_data_id` の出力から `lon/lat` を使用し、1.5km 以内にある住宅用途の公示地価ポイントを最近傍検索して特徴量化、`data/interim/03_01_join_koji_price/{train,test}.parquet` に保存。

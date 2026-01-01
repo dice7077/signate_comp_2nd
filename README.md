@@ -68,6 +68,7 @@ python scripts/make_submission.py \
 | Dataset Version | Experiment   | Description                | Val MAPE |
 |-----------------|--------------|----------------------------|----------|
 | 0001_initial    | 0001_initial | LightGBM baseline (kodate) | 0.2615   |
+| 0003_school_ele_name | 0004_few_features | 少数特徴 + logターゲットLGBM | 0.1696   |
 
 ### 実験一覧（マンション）
 

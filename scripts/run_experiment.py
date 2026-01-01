@@ -7,7 +7,7 @@ import shutil
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 import yaml
 
@@ -81,6 +81,31 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="同名実験ディレクトリが存在する場合に上書きする。",
     )
+    parser.add_argument(
+        "--categorical-cols",
+        action="append",
+        metavar="COL1,COL2",
+        default=[],
+        help="カテゴリ扱いする特徴量名（カンマ区切りで複数指定可、複数回指定可）。",
+    )
+    parser.add_argument(
+        "--feature-cols",
+        action="append",
+        metavar="COL1,COL2",
+        default=[],
+        help="使用する特徴量名（カンマ区切りで複数指定可、複数回指定可）。未指定なら全列。",
+    )
+    parser.add_argument(
+        "--progress-period",
+        type=int,
+        default=500,
+        help="fold学習中に進捗を表示するイテレーション間隔（<=0で無効）。",
+    )
+    parser.add_argument(
+        "--log-target",
+        action="store_true",
+        help="target_column を対数変換して学習する（評価は元スケール）。",
+    )
     return parser.parse_args()
 
 
@@ -95,6 +120,9 @@ def main() -> None:
     params.update(param_overrides)
     params["seed"] = args.seed
 
+    categorical_cols = _parse_name_list(args.categorical_cols)
+    feature_cols = _parse_name_list(args.feature_cols)
+
     config = ExperimentConfig(
         type_label=args.type,
         dataset_version=args.version,
@@ -105,6 +133,10 @@ def main() -> None:
         num_boost_round=args.num_boost_round,
         early_stopping_rounds=args.early_stopping_rounds,
         lightgbm_params=params,
+        categorical_features=categorical_cols or None,
+        feature_columns=feature_cols or None,
+        progress_period=max(0, args.progress_period),
+        log_target=args.log_target,
     )
 
     try:
@@ -129,6 +161,18 @@ def _parse_param_overrides(entries: list[str]) -> Dict[str, Any]:
         except yaml.YAMLError as exc:
             raise ValueError(f"--param の値を解析できません: {entry}") from exc
     return overrides
+
+
+def _parse_name_list(entries: list[str]) -> List[str]:
+    names: List[str] = []
+    for chunk in entries:
+        for raw in chunk.split(","):
+            name = raw.strip()
+            if not name:
+                continue
+            if name not in names:
+                names.append(name)
+    return names
 
 
 def snapshot_code(result: ExperimentResult, script_path: Path, cli_args: Dict[str, Any]) -> None:

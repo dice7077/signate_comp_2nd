@@ -14,6 +14,7 @@ import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from pandas.api.types import CategoricalDtype
 import seaborn as sns
 from sklearn.model_selection import KFold
 
@@ -58,6 +59,10 @@ class ExperimentConfig:
     lightgbm_params: Dict[str, Any] = field(default_factory=default_lightgbm_params)
     target_column: str = "money_room"
     id_column: str = "data_id"
+    feature_columns: Sequence[str] | None = None
+    categorical_features: Sequence[str] | None = None
+    progress_period: int = 500
+    log_target: bool = False
 
 
 @dataclass
@@ -100,9 +105,26 @@ def run_experiment(config: ExperimentConfig, *, overwrite: bool = False) -> Expe
     test_df = pd.read_parquet(test_path)
 
     feature_cols = _resolve_feature_columns(train_df, config)
-    target = train_df[config.target_column].astype(float).to_numpy()
-    features = train_df[feature_cols]
-    test_features = test_df[feature_cols]
+    target_raw = train_df[config.target_column].astype(float).to_numpy()
+    if not np.all(np.isfinite(target_raw)):
+        raise ExperimentError("Target列に無効な値が含まれています。")
+    target = target_raw.copy()
+    if config.log_target:
+        if np.any(target_raw <= 0):
+            raise ExperimentError("log_target=True の場合、targetは正の値でなければなりません。")
+        target = np.log(target_raw)
+    features = train_df[feature_cols].copy()
+    test_features = test_df[feature_cols].copy()
+
+    categorical_cols = []
+    if config.categorical_features:
+        categorical_cols = list(dict.fromkeys(config.categorical_features))
+        missing_cats = [col for col in categorical_cols if col not in feature_cols]
+        if missing_cats:
+            raise ExperimentError(
+                f"Categorical列が存在しません: {', '.join(missing_cats)}"
+            )
+        _prepare_categorical_features(features, test_features, categorical_cols)
 
     oof_predictions = np.zeros(len(train_df), dtype=float)
     oof_folds = np.zeros(len(train_df), dtype=int)
@@ -125,8 +147,22 @@ def run_experiment(config: ExperimentConfig, *, overwrite: bool = False) -> Expe
 
     for fold_idx, (train_idx, valid_idx) in enumerate(kf.split(features, target), start=1):
         fold_start = time.perf_counter()
-        train_set = lgb.Dataset(features.iloc[train_idx], label=target[train_idx], feature_name=list(feature_cols))
-        valid_set = lgb.Dataset(features.iloc[valid_idx], label=target[valid_idx], reference=train_set)
+        print(
+            f"[fold {fold_idx}] 学習開始: train={len(train_idx)} valid={len(valid_idx)} features={len(feature_cols)}",
+            flush=True,
+        )
+        train_set = lgb.Dataset(
+            features.iloc[train_idx],
+            label=target[train_idx],
+            feature_name=list(feature_cols),
+            categorical_feature=categorical_cols or None,
+        )
+        valid_set = lgb.Dataset(
+            features.iloc[valid_idx],
+            label=target[valid_idx],
+            reference=train_set,
+            categorical_feature=categorical_cols or None,
+        )
 
         booster = lgb.train(
             lgbm_params,
@@ -136,13 +172,16 @@ def run_experiment(config: ExperimentConfig, *, overwrite: bool = False) -> Expe
             valid_names=["train", "valid"],
             callbacks=[
                 lgb.early_stopping(config.early_stopping_rounds, verbose=False),
-                lgb.log_evaluation(period=100),
+                _fold_progress_callback(fold_idx, config.progress_period),
             ],
         )
 
         best_iteration = booster.best_iteration or config.num_boost_round
         valid_pred = booster.predict(features.iloc[valid_idx], num_iteration=best_iteration)
         test_pred = booster.predict(test_features, num_iteration=best_iteration)
+        if config.log_target:
+            valid_pred = np.exp(valid_pred)
+            test_pred = np.exp(test_pred)
 
         oof_predictions[valid_idx] = valid_pred
         oof_folds[valid_idx] = fold_idx
@@ -164,20 +203,32 @@ def run_experiment(config: ExperimentConfig, *, overwrite: bool = False) -> Expe
         )
 
         fold_time = time.perf_counter() - fold_start
-        fold_metrics.append(
-            {
-                "fold": fold_idx,
-                "rows_train": int(len(train_idx)),
-                "rows_valid": int(len(valid_idx)),
-                "best_iteration": int(best_iteration),
-                "mape": _safe_mape(target[valid_idx], valid_pred),
-                "mae": float(np.mean(np.abs(target[valid_idx] - valid_pred))),
-                "rmse": float(math.sqrt(np.mean((target[valid_idx] - valid_pred) ** 2))),
-                "train_time_sec": float(fold_time),
-            }
+        eval_target = target_raw[valid_idx]
+        fold_entry = {
+            "fold": fold_idx,
+            "rows_train": int(len(train_idx)),
+            "rows_valid": int(len(valid_idx)),
+            "best_iteration": int(best_iteration),
+            "mape": _safe_mape(eval_target, valid_pred),
+            "mae": float(np.mean(np.abs(eval_target - valid_pred))),
+            "rmse": float(math.sqrt(np.mean((eval_target - valid_pred) ** 2))),
+            "train_time_sec": float(fold_time),
+        }
+        fold_metrics.append(fold_entry)
+        print(
+            "[fold {fold}] 完了: best_iter={best_iter} "
+            "MAPE={mape:.6f} MAE={mae:.2f} RMSE={rmse:.2f} time={time:.1f}s".format(
+                fold=fold_idx,
+                best_iter=fold_entry["best_iteration"],
+                mape=fold_entry["mape"],
+                mae=fold_entry["mae"],
+                rmse=fold_entry["rmse"],
+                time=fold_entry["train_time_sec"],
+            ),
+            flush=True,
         )
 
-    overall_metrics = _summarize_metrics(target, oof_predictions, fold_metrics)
+    overall_metrics = _summarize_metrics(target_raw, oof_predictions, fold_metrics)
 
     test_prediction = np.mean(np.vstack(test_predictions_folds), axis=0)
 
@@ -193,7 +244,7 @@ def run_experiment(config: ExperimentConfig, *, overwrite: bool = False) -> Expe
         {
             config.id_column: train_df[config.id_column],
             "fold": oof_folds,
-            "y_true": target,
+            "y_true": target_raw,
             "y_pred": oof_predictions,
         }
     )
@@ -222,12 +273,13 @@ def run_experiment(config: ExperimentConfig, *, overwrite: bool = False) -> Expe
     _write_json(metrics_path, overall_metrics)
 
     plot_paths = _create_plots(
-        y_true=target,
+        y_true=target_raw,
         y_pred=oof_predictions,
         fold_metrics=fold_metrics,
         plots_dir=plots_dir,
         type_label=config.type_label,
         experiment_name=config.experiment_name,
+        aggregated_importance=aggregated_importance,
     )
 
     artifacts = {
@@ -284,8 +336,55 @@ def _validate_config(config: ExperimentConfig) -> None:
 
 
 def _resolve_feature_columns(df: pd.DataFrame, config: ExperimentConfig) -> List[str]:
+    if config.feature_columns:
+        ordered = list(dict.fromkeys(config.feature_columns))
+        missing = [col for col in ordered if col not in df.columns]
+        if missing:
+            raise ExperimentError(f"指定された特徴量が存在しません: {', '.join(missing)}")
+        return ordered
     reserved = {config.id_column, config.target_column}
     return [col for col in df.columns if col not in reserved]
+
+
+def _prepare_categorical_features(
+    train_df: pd.DataFrame, test_df: pd.DataFrame, categorical_cols: Sequence[str]
+) -> None:
+    for col in categorical_cols:
+        train_series = train_df[col].astype("string[python]")
+        test_series = test_df[col].astype("string[python]")
+        combined = pd.concat([train_series, test_series], ignore_index=True)
+        categories = pd.unique(combined.dropna())
+        dtype = CategoricalDtype(categories=categories, ordered=False)
+        train_df[col] = train_series.astype(dtype)
+        test_df[col] = test_series.astype(dtype)
+
+
+def _fold_progress_callback(fold_idx: int, period: int):
+    if period <= 0:
+        def _noop(env):
+            return
+
+        return _noop
+
+    period = max(1, period)
+
+    def _callback(env: lgb.callback.CallbackEnv) -> None:
+        iteration = env.iteration + 1
+        end_iteration = getattr(env, "end_iteration", env.iteration + 1)
+        if iteration % period != 0 and iteration != end_iteration:
+            return
+        valid_metrics = [
+            (eval_name, result)
+            for data_name, eval_name, result, _ in env.evaluation_result_list
+            if data_name == "valid"
+        ]
+        if not valid_metrics:
+            return
+        metrics_text = " ".join(f"{name}={value:.6f}" for name, value in valid_metrics)
+        print(f"[fold {fold_idx}] iter={iteration}: {metrics_text}", flush=True)
+
+    _callback.order = 10
+    return _callback
 
 
 def _safe_mape(y_true: Sequence[float], y_pred: Sequence[float], eps: float = 1e-6) -> float:
@@ -319,20 +418,26 @@ def _create_plots(
     plots_dir: Path,
     type_label: str,
     experiment_name: str,
+    aggregated_importance: pd.DataFrame | None = None,
 ) -> Dict[str, Path]:
     plots_dir.mkdir(parents=True, exist_ok=True)
     scatter_path = plots_dir / "oof_scatter.png"
     residual_path = plots_dir / "residual_hist.png"
     fold_bar_path = plots_dir / "fold_mape.png"
+    fi_path = plots_dir / "feature_importance.png"
 
     _plot_scatter(y_true, y_pred, scatter_path, type_label, experiment_name)
     _plot_residuals(y_true, y_pred, residual_path, type_label, experiment_name)
     _plot_fold_mape(fold_metrics, fold_bar_path, type_label, experiment_name)
+    fi_available = aggregated_importance is not None and not aggregated_importance.empty
+    if fi_available:
+        _plot_feature_importance(aggregated_importance, fi_path, type_label, experiment_name)
 
     return {
         "oof_scatter": scatter_path,
         "residual_hist": residual_path,
         "fold_mape": fold_bar_path,
+        **({"feature_importance": fi_path} if fi_available else {}),
     }
 
 
@@ -375,6 +480,44 @@ def _plot_fold_mape(fold_metrics: Sequence[Dict[str, Any]], path: Path, type_lab
     plt.savefig(path, dpi=200)
     plt.close()
 
+
+def _plot_feature_importance(
+    aggregated_importance: pd.DataFrame,
+    path: Path,
+    type_label: str,
+    exp: str,
+    top_n: int = 30,
+) -> None:
+    if aggregated_importance.empty:
+        return
+
+    plot_df = (
+        aggregated_importance.sort_values("importance_mean", ascending=False)
+        .head(top_n)
+        .copy()
+    )
+    plot_df = plot_df.iloc[::-1]  # 水平棒グラフで上位を上に表示するため反転
+
+    heights = max(4, 0.35 * len(plot_df))
+    fig, ax = plt.subplots(figsize=(8, heights))
+    stds = plot_df["importance_std"].fillna(0).to_numpy()
+    error_kw = {"capsize": 3, "ecolor": "#333333", "elinewidth": 1}
+    ax.barh(
+        y=np.arange(len(plot_df)),
+        width=plot_df["importance_mean"],
+        xerr=stds,
+        error_kw=error_kw,
+        color="#4C72B0",
+        alpha=0.9,
+    )
+    ax.set_yticks(np.arange(len(plot_df)))
+    ax.set_yticklabels(plot_df["feature"])
+    ax.set_xlabel("Gain importance (mean)")
+    ax.set_ylabel("Feature")
+    ax.set_title(f"{type_label}::{exp} feature importance (top {len(plot_df)})")
+    plt.tight_layout()
+    plt.savefig(path, dpi=200)
+    plt.close()
 
 def _write_json(path: Path, payload: Dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
