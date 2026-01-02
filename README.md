@@ -17,7 +17,7 @@ there instead.
 
 ## 実験運用ルール
 
-- すべての実験成果物は `experiments/<type>/<experiment_name>/` に保存する。
+- すべての実験成果物は `experiments/<type>/<experiment_name>/` に保存する。same_unit_id 系列は `experiments/kodate_same_unit_id/<experiment_name>/` および `experiments/mansion_same_unit_id/<experiment_name>/` を利用する。
 - 同名ディレクトリが存在する場合は `--overwrite` を明示しない限り上書きしない。
 - `README` の「実験一覧」テーブルへ validation MAPE（小数第4位程度）と簡潔な説明を必ず追記し、公開スコアは「提出一覧」テーブルで提出単位に手動入力する。
 
@@ -91,6 +91,18 @@ python scripts/make_submission.py \
 | 0003_targetyear_geo_features | 0003_targetyear_geo_features | target-year koji/land + mesh人口4期 (lr=0.1, log target) | 0.1127   |
 | 0004_add_tags   | 0004_add_tags | target-year geo + mesh人口4期 + 指定unit/buildingタグone-hot (lr=0.1, log target) | 0.1098   |
 
+### 実験一覧（戸建て: same_unit_id）
+
+| Dataset Version | Experiment | Description | Val MAPE |
+|-----------------|------------|-------------|----------|
+| 0007_same_unit_id | 0007_same_unit_id | 戸建てタグ + 同一unit履歴ログ特徴 (log target, group by unit_id) | 0.0694 |
+
+### 実験一覧（マンション: same_unit_id）
+
+| Dataset Version | Experiment | Description | Val MAPE |
+|-----------------|------------|-------------|----------|
+| 0006_same_unit_id | 0006_same_unit_id | マンションタグ + 同一unit履歴ログ特徴 (lr=0.03, log target, group by unit_id) | 0.0754 |
+
 ### 提出一覧
 
 | Kodate Experiment | Mansion Experiment | Submission Path                                       | Public Score | Notes                |
@@ -99,3 +111,4 @@ python scripts/make_submission.py \
 | 0004_few_features | 0002_few_features  | `submissions/submission_kodate0004_mansion0002.csv`   | 17.4984      | log target LGBM few features |
 | 0005_targetyear_geo_features | 0003_targetyear_geo_features | `submissions/submission_kodate0005_mansion0003.csv`   | 15.4122      | target-year geo + mesh人口4期 |
 | 0006_add_tags     | 0004_add_tags      | `submissions/submission_kodate0006_mansion0004.csv`   | 15.0005      | target-year geo + mesh人口4期 + 指定タグone-hot |
+| 0007_same_unit_id (mix) | 0006_same_unit_id (mix) | `submissions/submission_kodate0007mix_mansion0006mix.csv` | 14.9789      | same_unit_id系mix推論（log target, group by unit_id） |

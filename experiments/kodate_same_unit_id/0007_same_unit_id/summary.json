@@ -134,28 +134,28 @@
     ]
   },
   "artifacts": {
-    "metrics": "experiments/kodate/0007_same_unit_id/artifacts/reports/metrics.json",
-    "oof_predictions": "experiments/kodate/0007_same_unit_id/artifacts/predictions/oof_predictions.parquet",
-    "test_predictions": "experiments/kodate/0007_same_unit_id/artifacts/predictions/test_predictions.parquet",
-    "feature_importance": "experiments/kodate/0007_same_unit_id/artifacts/reports/feature_importance.csv",
-    "feature_importance_by_fold": "experiments/kodate/0007_same_unit_id/artifacts/reports/feature_importance_by_fold.csv",
+    "metrics": "experiments/kodate_same_unit_id/0007_same_unit_id/artifacts/reports/metrics.json",
+    "oof_predictions": "experiments/kodate_same_unit_id/0007_same_unit_id/artifacts/predictions/oof_predictions.parquet",
+    "test_predictions": "experiments/kodate_same_unit_id/0007_same_unit_id/artifacts/predictions/test_predictions.parquet",
+    "feature_importance": "experiments/kodate_same_unit_id/0007_same_unit_id/artifacts/reports/feature_importance.csv",
+    "feature_importance_by_fold": "experiments/kodate_same_unit_id/0007_same_unit_id/artifacts/reports/feature_importance_by_fold.csv",
     "plots": {
-      "oof_scatter": "experiments/kodate/0007_same_unit_id/artifacts/plots/oof_scatter.png",
-      "oof_scatter_loglog": "experiments/kodate/0007_same_unit_id/artifacts/plots/oof_scatter_loglog.png",
-      "residual_hist": "experiments/kodate/0007_same_unit_id/artifacts/plots/residual_hist.png",
-      "fold_mape": "experiments/kodate/0007_same_unit_id/artifacts/plots/fold_mape.png",
-      "feature_importance": "experiments/kodate/0007_same_unit_id/artifacts/plots/feature_importance.png"
+      "oof_scatter": "experiments/kodate_same_unit_id/0007_same_unit_id/artifacts/plots/oof_scatter.png",
+      "oof_scatter_loglog": "experiments/kodate_same_unit_id/0007_same_unit_id/artifacts/plots/oof_scatter_loglog.png",
+      "residual_hist": "experiments/kodate_same_unit_id/0007_same_unit_id/artifacts/plots/residual_hist.png",
+      "fold_mape": "experiments/kodate_same_unit_id/0007_same_unit_id/artifacts/plots/fold_mape.png",
+      "feature_importance": "experiments/kodate_same_unit_id/0007_same_unit_id/artifacts/plots/feature_importance.png"
     },
     "models": [
-      "experiments/kodate/0007_same_unit_id/artifacts/models/fold_1.txt",
-      "experiments/kodate/0007_same_unit_id/artifacts/models/fold_2.txt",
-      "experiments/kodate/0007_same_unit_id/artifacts/models/fold_3.txt",
-      "experiments/kodate/0007_same_unit_id/artifacts/models/fold_4.txt",
-      "experiments/kodate/0007_same_unit_id/artifacts/models/fold_5.txt"
+      "experiments/kodate_same_unit_id/0007_same_unit_id/artifacts/models/fold_1.txt",
+      "experiments/kodate_same_unit_id/0007_same_unit_id/artifacts/models/fold_2.txt",
+      "experiments/kodate_same_unit_id/0007_same_unit_id/artifacts/models/fold_3.txt",
+      "experiments/kodate_same_unit_id/0007_same_unit_id/artifacts/models/fold_4.txt",
+      "experiments/kodate_same_unit_id/0007_same_unit_id/artifacts/models/fold_5.txt"
     ]
   },
   "paths": {
-    "experiment_dir": "experiments/kodate/0007_same_unit_id",
+    "experiment_dir": "experiments/kodate_same_unit_id/0007_same_unit_id",
     "dataset_dir": "data/processed/0001_kodate/0007_same_unit_id"
   },
   "config": {

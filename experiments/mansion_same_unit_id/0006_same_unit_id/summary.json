@@ -140,28 +140,28 @@
     ]
   },
   "artifacts": {
-    "metrics": "experiments/mansion/0006_same_unit_id/artifacts/reports/metrics.json",
-    "oof_predictions": "experiments/mansion/0006_same_unit_id/artifacts/predictions/oof_predictions.parquet",
-    "test_predictions": "experiments/mansion/0006_same_unit_id/artifacts/predictions/test_predictions.parquet",
-    "feature_importance": "experiments/mansion/0006_same_unit_id/artifacts/reports/feature_importance.csv",
-    "feature_importance_by_fold": "experiments/mansion/0006_same_unit_id/artifacts/reports/feature_importance_by_fold.csv",
+    "metrics": "experiments/mansion_same_unit_id/0006_same_unit_id/artifacts/reports/metrics.json",
+    "oof_predictions": "experiments/mansion_same_unit_id/0006_same_unit_id/artifacts/predictions/oof_predictions.parquet",
+    "test_predictions": "experiments/mansion_same_unit_id/0006_same_unit_id/artifacts/predictions/test_predictions.parquet",
+    "feature_importance": "experiments/mansion_same_unit_id/0006_same_unit_id/artifacts/reports/feature_importance.csv",
+    "feature_importance_by_fold": "experiments/mansion_same_unit_id/0006_same_unit_id/artifacts/reports/feature_importance_by_fold.csv",
     "plots": {
-      "oof_scatter": "experiments/mansion/0006_same_unit_id/artifacts/plots/oof_scatter.png",
-      "oof_scatter_loglog": "experiments/mansion/0006_same_unit_id/artifacts/plots/oof_scatter_loglog.png",
-      "residual_hist": "experiments/mansion/0006_same_unit_id/artifacts/plots/residual_hist.png",
-      "fold_mape": "experiments/mansion/0006_same_unit_id/artifacts/plots/fold_mape.png",
-      "feature_importance": "experiments/mansion/0006_same_unit_id/artifacts/plots/feature_importance.png"
+      "oof_scatter": "experiments/mansion_same_unit_id/0006_same_unit_id/artifacts/plots/oof_scatter.png",
+      "oof_scatter_loglog": "experiments/mansion_same_unit_id/0006_same_unit_id/artifacts/plots/oof_scatter_loglog.png",
+      "residual_hist": "experiments/mansion_same_unit_id/0006_same_unit_id/artifacts/plots/residual_hist.png",
+      "fold_mape": "experiments/mansion_same_unit_id/0006_same_unit_id/artifacts/plots/fold_mape.png",
+      "feature_importance": "experiments/mansion_same_unit_id/0006_same_unit_id/artifacts/plots/feature_importance.png"
     },
     "models": [
-      "experiments/mansion/0006_same_unit_id/artifacts/models/fold_1.txt",
-      "experiments/mansion/0006_same_unit_id/artifacts/models/fold_2.txt",
-      "experiments/mansion/0006_same_unit_id/artifacts/models/fold_3.txt",
-      "experiments/mansion/0006_same_unit_id/artifacts/models/fold_4.txt",
-      "experiments/mansion/0006_same_unit_id/artifacts/models/fold_5.txt"
+      "experiments/mansion_same_unit_id/0006_same_unit_id/artifacts/models/fold_1.txt",
+      "experiments/mansion_same_unit_id/0006_same_unit_id/artifacts/models/fold_2.txt",
+      "experiments/mansion_same_unit_id/0006_same_unit_id/artifacts/models/fold_3.txt",
+      "experiments/mansion_same_unit_id/0006_same_unit_id/artifacts/models/fold_4.txt",
+      "experiments/mansion_same_unit_id/0006_same_unit_id/artifacts/models/fold_5.txt"
     ]
   },
   "paths": {
-    "experiment_dir": "experiments/mansion/0006_same_unit_id",
+    "experiment_dir": "experiments/mansion_same_unit_id/0006_same_unit_id",
     "dataset_dir": "data/processed/0002_mansion/0006_same_unit_id"
   },
   "config": {
