@@ -96,6 +96,7 @@ python scripts/make_submission.py \
 | Dataset Version | Experiment | Description | Val MAPE |
 |-----------------|------------|-------------|----------|
 | 0007_same_unit_id | 0007_same_unit_id | 戸建てタグ + 同一unit履歴ログ特徴 (log target, group by unit_id) | 0.0694 |
+| 0008_test_202207only | 0008_test_202207only | 0007ベース + test unit抽出をtrain target_ym=202207重複に限定 | 0.0691 |
 
 ### 実験一覧（マンション: same_unit_id）
 

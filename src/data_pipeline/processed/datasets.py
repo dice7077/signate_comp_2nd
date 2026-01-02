@@ -250,12 +250,20 @@ FEATURE_PLAN_OVERRIDES: Dict[Tuple[str, str], List[str]] = {
     + list(KODATE_TAG_FEATURES)
     + ["unit_id"]
     + list(SAME_UNIT_HISTORY_FEATURES),
+    (
+        "kodate",
+        "0008_test_202207only",
+    ): FEATURE_PLAN["kodate"]
+    + list(KODATE_TAG_FEATURES)
+    + ["unit_id"]
+    + list(SAME_UNIT_HISTORY_FEATURES),
 }
 
-SAME_UNIT_ID_DATASETS: Tuple[Tuple[str, str], ...] = (
-    ("mansion", "0006_same_unit_id"),
-    ("kodate", "0007_same_unit_id"),
-)
+SAME_UNIT_ID_DATASET_CONFIGS: Dict[Tuple[str, str], Dict[str, object]] = {
+    ("mansion", "0006_same_unit_id"): {},
+    ("kodate", "0007_same_unit_id"): {},
+    ("kodate", "0008_test_202207only"): {"test_known_target_ym": 202207},
+}
 
 COLUMN_SOURCES: Dict[str, str] = {
     "2023_land_price": "land",
@@ -324,8 +332,9 @@ def build_processed_datasets(
         version_dir.mkdir(parents=True, exist_ok=True)
         split_meta: Dict[str, dict] = {}
         customizer = None
-        if (type_label, version) in SAME_UNIT_ID_DATASETS:
-            customizer = _SameUnitIdCustomizer()
+        customizer_config = SAME_UNIT_ID_DATASET_CONFIGS.get((type_label, version))
+        if customizer_config is not None:
+            customizer = _SameUnitIdCustomizer(**customizer_config)
 
         for split in ("train", "test"):
             output_path = version_dir / f"{split}.parquet"
@@ -556,9 +565,11 @@ class _SameUnitIdCustomizer:
     )
     FEATURE_NAMES: Tuple[str, ...] = SAME_UNIT_HISTORY_FEATURES
 
-    def __init__(self) -> None:
+    def __init__(self, *, test_known_target_ym: int | None = None) -> None:
         self._unit_histories: Dict[int, Tuple[np.ndarray, np.ndarray]] | None = None
         self._known_units: set[int] = set()
+        self._test_known_units: set[int] | None = None
+        self._test_known_target_ym = test_known_target_ym
 
     def transform(self, df: pd.DataFrame, split: str) -> pd.DataFrame:
         if "unit_id" not in df.columns or "target_ym" not in df.columns:
@@ -588,7 +599,8 @@ class _SameUnitIdCustomizer:
         return self._append_history_features(df_filtered)
 
     def _transform_test(self, df: pd.DataFrame) -> pd.DataFrame:
-        df_filtered = df.loc[df["unit_id"].isin(self._known_units)].copy()
+        allowed_units = self._test_known_units if self._test_known_units is not None else self._known_units
+        df_filtered = df.loc[df["unit_id"].isin(allowed_units)].copy()
         if df_filtered.empty:
             return self._ensure_feature_columns(df_filtered)
         return self._append_history_features(df_filtered)
@@ -628,6 +640,16 @@ class _SameUnitIdCustomizer:
             raise ProcessedDatasetError("unit_id の履歴を構築できませんでした。")
         self._unit_histories = histories
         self._known_units = set(histories.keys())
+        self._test_known_units = self._determine_test_known_units(base)
+
+    def _determine_test_known_units(self, base: pd.DataFrame) -> set[int]:
+        if self._test_known_target_ym is None:
+            return set(self._known_units)
+        target_mask = base["target_ym"] == self._test_known_target_ym
+        if not target_mask.any():
+            return set()
+        units = base.loc[target_mask, "unit_id"].astype("int64", copy=True)
+        return set(units.tolist())
 
     def _rows_with_history(self, df: pd.DataFrame) -> np.ndarray:
         unit_values = pd.to_numeric(df["unit_id"], errors="coerce").to_numpy(dtype=float)
