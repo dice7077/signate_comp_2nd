@@ -1,5 +1,6 @@
 from collections import OrderedDict
 
+from .adjust_mansion_money_room import adjust_mansion_money_room
 from .adjust_mansion_unit_area import adjust_mansion_unit_area
 from .assign_data_id import assign_data_id
 from .build_tag_id_features import build_tag_id_features
@@ -19,6 +20,7 @@ _STEP_FUNCTIONS = {
     "split_signate_by_type": split_signate_by_type,
     "build_tag_id_features": build_tag_id_features,
     "adjust_mansion_unit_area": adjust_mansion_unit_area,
+    "adjust_mansion_money_room": adjust_mansion_money_room,
 }
 
 STEP_REGISTRY = OrderedDict(
@@ -34,6 +36,7 @@ __all__ = [
     "drop_sparse_columns",
     "join_population_projection",
     "split_signate_by_type",
+    "adjust_mansion_money_room",
     "STEP_REGISTRY",
     "STEP_LAYOUT",
 ]

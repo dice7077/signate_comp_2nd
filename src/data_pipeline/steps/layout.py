@@ -34,6 +34,10 @@ STEP_LAYOUT: "OrderedDict[str, StepLayout]" = OrderedDict(
             "adjust_mansion_unit_area",
             StepLayout(stage=1, order=3, slug="adjust_mansion_unit_area"),
         ),
+        (
+            "adjust_mansion_money_room",
+            StepLayout(stage=1, order=4, slug="adjust_mansion_money_room"),
+        ),
         ("build_tag_id_features", StepLayout(stage=2, order=1, slug="build_tag_id_features")),
         ("join_koji_price", StepLayout(stage=3, order=1, slug="join_koji_price")),
         (

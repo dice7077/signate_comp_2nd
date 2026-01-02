@@ -103,6 +103,18 @@ STEP_OUTPUT_SPECS: "OrderedDict[str, Sequence[OutputSpec]]" = OrderedDict(
                 for label in TYPE_LABELS
             ),
         ),
+        (
+            "adjust_mansion_money_room",
+            tuple(
+                OutputSpec(
+                    filename=f"{dataset}_{label}.parquet",
+                    dataset=dataset,
+                    type_label=label,
+                )
+                for dataset in ("train", "test")
+                for label in TYPE_LABELS
+            ),
+        ),
     ]
 )
 

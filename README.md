@@ -112,4 +112,6 @@ python scripts/make_submission.py \
 | 0004_few_features | 0002_few_features  | `submissions/submission_kodate0004_mansion0002.csv`   | 17.4984      | log target LGBM few features |
 | 0005_targetyear_geo_features | 0003_targetyear_geo_features | `submissions/submission_kodate0005_mansion0003.csv`   | 15.4122      | target-year geo + mesh人口4期 |
 | 0006_add_tags     | 0004_add_tags      | `submissions/submission_kodate0006_mansion0004.csv`   | 15.0005      | target-year geo + mesh人口4期 + 指定タグone-hot |
+| 0006_add_tags     | 0005_adjust_unit_house_area | `submissions/submission_kodate0006_mansion0005.csv`   | 15.1726      | target-year geo + mesh人口4期 + 指定タグone-hot + unit面積調整 |
 | 0007_same_unit_id (mix) | 0006_same_unit_id (mix) | `submissions/submission_kodate0007mix_mansion0006mix.csv` | 14.9789      | same_unit_id系mix推論（log target, group by unit_id） |
+| 0006_add_tags     | 0005_adjust_unit_house_area + 0006_same_unit_id | `submissions/submission_kodate0006_mansion0005_sameunit0006.csv` | 15.2263      | mansion 0005 + same_unit_id 0006 ミックス（log target, group by unit_id） |
