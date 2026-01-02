@@ -48,6 +48,10 @@ def parse_args() -> argparse.Namespace:
         help="実験の簡潔な説明。",
     )
     parser.add_argument(
+        "--group-column",
+        help="GroupKFold で fold を分割する際のグループ列名。",
+    )
+    parser.add_argument(
         "--folds",
         type=int,
         default=5,
@@ -153,6 +157,7 @@ def main() -> None:
         feature_columns=feature_cols or None,
         progress_period=max(0, args.progress_period),
         log_target=args.log_target,
+        group_column=args.group_column,
     )
 
     try:

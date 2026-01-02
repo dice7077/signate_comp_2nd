@@ -17,7 +17,7 @@ import numpy as np
 import pandas as pd
 from pandas.api.types import CategoricalDtype
 import seaborn as sns
-from sklearn.model_selection import KFold
+from sklearn.model_selection import GroupKFold, KFold
 
 from ..data_pipeline.processed.datasets import TYPE_DIRECTORIES
 from ..data_pipeline.utils.paths import DATA_DIR, PROJECT_ROOT
@@ -64,6 +64,7 @@ class ExperimentConfig:
     categorical_features: Sequence[str] | None = None
     progress_period: int = 500
     log_target: bool = False
+    group_column: str | None = None
 
 
 @dataclass
@@ -104,6 +105,21 @@ def run_experiment(config: ExperimentConfig, *, overwrite: bool = False) -> Expe
 
     train_df = pd.read_parquet(train_path)
     test_df = pd.read_parquet(test_path)
+    group_values: pd.Series | None = None
+    if config.group_column:
+        if config.group_column not in train_df.columns:
+            raise ExperimentError(
+                f"group_column '{config.group_column}' が train データに存在しません。"
+            )
+        if config.group_column not in test_df.columns:
+            raise ExperimentError(
+                f"group_column '{config.group_column}' が test データに存在しません。"
+            )
+        group_values = train_df[config.group_column]
+        if group_values.isna().any():
+            raise ExperimentError(
+                f"group_column '{config.group_column}' に欠損が含まれています。"
+            )
 
     feature_cols = _resolve_feature_columns(train_df, config)
     target_raw = train_df[config.target_column].astype(float).to_numpy()
@@ -140,13 +156,20 @@ def run_experiment(config: ExperimentConfig, *, overwrite: bool = False) -> Expe
     lgbm_params.setdefault("feature_pre_filter", False)
     lgbm_params.setdefault("verbosity", -1)
 
-    kf = KFold(
-        n_splits=config.folds,
-        shuffle=True,
-        random_state=config.random_state,
-    )
+    if config.group_column:
+        splitter = GroupKFold(n_splits=config.folds)
+        split_iter = splitter.split(
+            features, target, groups=group_values.to_numpy(copy=False)
+        )
+    else:
+        splitter = KFold(
+            n_splits=config.folds,
+            shuffle=True,
+            random_state=config.random_state,
+        )
+        split_iter = splitter.split(features, target)
 
-    for fold_idx, (train_idx, valid_idx) in enumerate(kf.split(features, target), start=1):
+    for fold_idx, (train_idx, valid_idx) in enumerate(split_iter, start=1):
         fold_start = time.perf_counter()
         print(
             f"[fold {fold_idx}] 学習開始: train={len(train_idx)} valid={len(valid_idx)} features={len(feature_cols)}",
@@ -344,6 +367,8 @@ def _resolve_feature_columns(df: pd.DataFrame, config: ExperimentConfig) -> List
             raise ExperimentError(f"指定された特徴量が存在しません: {', '.join(missing)}")
         return ordered
     reserved = {config.id_column, config.target_column}
+    if config.group_column:
+        reserved.add(config.group_column)
     return [col for col in df.columns if col not in reserved]
 
 

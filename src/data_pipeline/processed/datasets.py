@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Sequence, Tuple, cast
 
+import numpy as np
+
 import pandas as pd
 
 from ..utils.paths import DATA_DIR, INTERIM_DIR, PROJECT_ROOT
@@ -85,6 +87,16 @@ MANSION_BUILDING_TAG_COLUMNS: Tuple[str, ...] = (
 MANSION_TAG_FEATURES: Tuple[str, ...] = (
     MANSION_UNIT_TAG_COLUMNS + MANSION_BUILDING_TAG_COLUMNS
 )
+
+SAME_UNIT_HISTORY_FEATURES: Tuple[str, ...] = (
+    "money_room_past_6m",
+    "money_room_past_12m",
+    "money_room_past_18m",
+    "money_room_past_24m",
+    "money_room_past_over_30m",
+)
+SYNTHETIC_FEATURES: Tuple[str, ...] = SAME_UNIT_HISTORY_FEATURES
+SYNTHETIC_FEATURE_SET = frozenset(SYNTHETIC_FEATURES)
 
 KODATE_UNIT_TAG_COLUMNS: Tuple[str, ...] = (
     "unit_tag_230401",
@@ -223,8 +235,27 @@ FEATURE_PLAN: Dict[str, List[str]] = {
 
 FEATURE_PLAN_OVERRIDES: Dict[Tuple[str, str], List[str]] = {
     ("mansion", "0004_add_tags"): FEATURE_PLAN["mansion"] + list(MANSION_TAG_FEATURES),
+    (
+        "mansion",
+        "0006_same_unit_id",
+    ): FEATURE_PLAN["mansion"]
+    + list(MANSION_TAG_FEATURES)
+    + ["unit_id"]
+    + list(SAME_UNIT_HISTORY_FEATURES),
     ("kodate", "0006_add_tags"): FEATURE_PLAN["kodate"] + list(KODATE_TAG_FEATURES),
+    (
+        "kodate",
+        "0007_same_unit_id",
+    ): FEATURE_PLAN["kodate"]
+    + list(KODATE_TAG_FEATURES)
+    + ["unit_id"]
+    + list(SAME_UNIT_HISTORY_FEATURES),
 }
+
+SAME_UNIT_ID_DATASETS: Tuple[Tuple[str, str], ...] = (
+    ("mansion", "0006_same_unit_id"),
+    ("kodate", "0007_same_unit_id"),
+)
 
 COLUMN_SOURCES: Dict[str, str] = {
     "2023_land_price": "land",
@@ -292,6 +323,9 @@ def build_processed_datasets(
         version_dir = PROCESSED_ROOT / TYPE_DIRECTORIES[type_label] / version
         version_dir.mkdir(parents=True, exist_ok=True)
         split_meta: Dict[str, dict] = {}
+        customizer = None
+        if (type_label, version) in SAME_UNIT_ID_DATASETS:
+            customizer = _SameUnitIdCustomizer()
 
         for split in ("train", "test"):
             output_path = version_dir / f"{split}.parquet"
@@ -303,6 +337,8 @@ def build_processed_datasets(
             df = _load_base_dataframe(split, type_label, features)
             df = _merge_supplementary_features(df, split, features)
             df = _apply_target_year_alignment(df)
+            if customizer is not None:
+                df = customizer.transform(df, split)
 
             columns = _output_columns(split, features)
             missing = [col for col in columns if col not in df.columns]
@@ -363,10 +399,11 @@ def _load_base_dataframe(split: str, type_label: str, features: Sequence[str]) -
 
 
 def _base_feature_columns(features: Sequence[str]) -> List[str]:
-    cols = [col for col in features if COLUMN_SOURCES.get(col, "base") == "base"]
     # 順序維持のため features の登場順で重複排除
     ordered: List[str] = []
     for col in features:
+        if col in SYNTHETIC_FEATURE_SET:
+            continue
         if COLUMN_SOURCES.get(col, "base") != "base":
             continue
         if col not in ordered:
@@ -502,6 +539,188 @@ def _summarize_sources(features: Sequence[str]) -> Dict[str, List[str]]:
         summary.setdefault(source, [])
         summary[source].append(col)
     return summary
+
+
+class _SameUnitIdCustomizer:
+    """
+    target_ym を利用した unit_id ごとの過去 money_room 特徴量を構築し、
+    条件に合致しない行を除外するカスタマイザ。
+    """
+
+    BUCKET_SPECS: Tuple[Tuple[str, int, int | None], ...] = (
+        ("money_room_past_6m", 1, 6),
+        ("money_room_past_12m", 7, 12),
+        ("money_room_past_18m", 13, 18),
+        ("money_room_past_24m", 19, 24),
+        ("money_room_past_over_30m", 30, None),
+    )
+    FEATURE_NAMES: Tuple[str, ...] = SAME_UNIT_HISTORY_FEATURES
+
+    def __init__(self) -> None:
+        self._unit_histories: Dict[int, Tuple[np.ndarray, np.ndarray]] | None = None
+        self._known_units: set[int] = set()
+
+    def transform(self, df: pd.DataFrame, split: str) -> pd.DataFrame:
+        if "unit_id" not in df.columns or "target_ym" not in df.columns:
+            raise ProcessedDatasetError(
+                "unit_id/target_ym 列が不足しているため 0006_same_unit_id を構築できません。"
+            )
+        if split == "train":
+            return self._transform_train(df)
+        if split == "test":
+            if self._unit_histories is None:
+                raise ProcessedDatasetError(
+                    "train split を先に処理してから test split を処理してください。"
+                )
+            return self._transform_test(df)
+        raise ProcessedDatasetError(f"未対応の split が指定されました: {split}")
+
+    def _transform_train(self, df: pd.DataFrame) -> pd.DataFrame:
+        if "money_room" not in df.columns:
+            raise ProcessedDatasetError("train split には money_room 列が必要です。")
+        self._fit_history(df)
+        mask = self._rows_with_history(df)
+        df_filtered = df.loc[mask].copy()
+        if df_filtered.empty:
+            raise ProcessedDatasetError(
+                "unit_id が過去に登場した train 行が存在しません。"
+            )
+        return self._append_history_features(df_filtered)
+
+    def _transform_test(self, df: pd.DataFrame) -> pd.DataFrame:
+        df_filtered = df.loc[df["unit_id"].isin(self._known_units)].copy()
+        if df_filtered.empty:
+            return self._ensure_feature_columns(df_filtered)
+        return self._append_history_features(df_filtered)
+
+    def _fit_history(self, df: pd.DataFrame) -> None:
+        unit_series = pd.to_numeric(df["unit_id"], errors="coerce")
+        target_series = pd.to_numeric(df["target_ym"], errors="coerce")
+        money_series = pd.to_numeric(df["money_room"], errors="coerce")
+        base = pd.DataFrame(
+            {
+                "unit_id": unit_series,
+                "target_ym": target_series,
+                "money_room": money_series,
+            }
+        ).dropna()
+        if base.empty:
+            raise ProcessedDatasetError("履歴構築に利用できる train 行がありません。")
+        base["unit_id"] = base["unit_id"].astype("int64")
+        base["target_ym"] = base["target_ym"].astype("int64")
+        base["money_room"] = base["money_room"].astype(float)
+        histories: Dict[int, Tuple[np.ndarray, np.ndarray]] = {}
+        for unit_id, group in base.groupby("unit_id", sort=False):
+            months = self._to_month_index_from_numeric(
+                group["target_ym"].to_numpy(dtype=float, copy=True)
+            )
+            valid = np.isfinite(months)
+            if not np.any(valid):
+                continue
+            months_valid = months[valid].astype(np.int64, copy=True)
+            values_valid = group["money_room"].to_numpy(dtype=float, copy=True)[valid]
+            order = np.argsort(months_valid, kind="mergesort")
+            histories[int(unit_id)] = (
+                months_valid[order],
+                values_valid[order],
+            )
+        if not histories:
+            raise ProcessedDatasetError("unit_id の履歴を構築できませんでした。")
+        self._unit_histories = histories
+        self._known_units = set(histories.keys())
+
+    def _rows_with_history(self, df: pd.DataFrame) -> np.ndarray:
+        unit_values = pd.to_numeric(df["unit_id"], errors="coerce").to_numpy(dtype=float)
+        target_values = pd.to_numeric(df["target_ym"], errors="coerce").to_numpy(
+            dtype=float
+        )
+        mask = np.zeros(len(df), dtype=bool)
+        valid = np.isfinite(unit_values) & np.isfinite(target_values)
+        if not np.any(valid):
+            return mask
+        min_target: Dict[int, int] = {}
+        valid_units = unit_values[valid].astype(np.int64, copy=False)
+        valid_targets = target_values[valid].astype(np.int64, copy=False)
+        for uid, target in zip(valid_units, valid_targets):
+            prev = min_target.get(uid)
+            if prev is None or target < prev:
+                min_target[uid] = target
+        valid_indices = np.flatnonzero(valid)
+        for idx in valid_indices:
+            uid = int(unit_values[idx])
+            target = int(target_values[idx])
+            if target > min_target.get(uid, target):
+                mask[idx] = True
+        return mask
+
+    def _append_history_features(self, df: pd.DataFrame) -> pd.DataFrame:
+        if df.empty:
+            return self._ensure_feature_columns(df)
+        arrays = self._compute_history_feature_arrays(df)
+        for name, values in arrays.items():
+            df[name] = pd.Series(values, index=df.index, dtype="Float64")
+        return df
+
+    def _ensure_feature_columns(self, df: pd.DataFrame) -> pd.DataFrame:
+        for name in self.FEATURE_NAMES:
+            if name not in df.columns:
+                df[name] = pd.Series(dtype="Float64")
+        return df
+
+    def _compute_history_feature_arrays(self, df: pd.DataFrame) -> Dict[str, np.ndarray]:
+        if self._unit_histories is None:
+            raise ProcessedDatasetError("unit_id 履歴が未構築です。")
+        unit_values = pd.to_numeric(df["unit_id"], errors="coerce").to_numpy(dtype=float)
+        month_indices = self._to_month_index_from_numeric(
+            pd.to_numeric(df["target_ym"], errors="coerce").to_numpy(dtype=float)
+        )
+        feature_matrix = {
+            name: np.full(len(df), np.nan, dtype=float) for name in self.FEATURE_NAMES
+        }
+        for row_idx in range(len(df)):
+            unit_val = unit_values[row_idx]
+            month_val = month_indices[row_idx]
+            if not np.isfinite(unit_val) or not np.isfinite(month_val):
+                continue
+            history = self._unit_histories.get(int(unit_val))
+            if history is None:
+                continue
+            months_hist, values_hist = history
+            diffs = month_val - months_hist
+            available = diffs > 0
+            if not np.any(available):
+                continue
+            diffs = diffs[available]
+            hist_values = values_hist[available]
+            for name, min_offset, max_offset in self.BUCKET_SPECS:
+                bucket = diffs >= min_offset
+                if max_offset is not None:
+                    bucket &= diffs <= max_offset
+                if not np.any(bucket):
+                    continue
+                avg = hist_values[bucket].mean()
+                if avg > 0:
+                    feature_matrix[name][row_idx] = float(np.log(avg))
+        return feature_matrix
+
+    @staticmethod
+    def _to_month_index_from_numeric(values: np.ndarray) -> np.ndarray:
+        result = np.full(len(values), np.nan, dtype=float)
+        if values.size == 0:
+            return result
+        finite_mask = np.isfinite(values)
+        if not np.any(finite_mask):
+            return result
+        indices = np.flatnonzero(finite_mask)
+        ints = values[finite_mask].astype(np.int64, copy=False)
+        months = ints % 100
+        years = ints // 100
+        valid_month = (months >= 1) & (months <= 12)
+        if not np.any(valid_month):
+            return result
+        valid_indices = indices[valid_month]
+        result[valid_indices] = years[valid_month] * 12 + (months[valid_month] - 1)
+        return result
 
 
 __all__ = ["build_processed_datasets", "ProcessedDatasetError"]
