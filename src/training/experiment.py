@@ -65,6 +65,7 @@ class ExperimentConfig:
     progress_period: int = 500
     log_target: bool = False
     group_column: str | None = None
+    weight_strategy: str | None = None
 
 
 @dataclass
@@ -130,6 +131,7 @@ def run_experiment(config: ExperimentConfig, *, overwrite: bool = False) -> Expe
         if np.any(target_raw <= 0):
             raise ExperimentError("log_target=True の場合、targetは正の値でなければなりません。")
         target = np.log(target_raw)
+    sample_weight = _compute_sample_weight(config, target)
     features = train_df[feature_cols].copy()
     test_features = test_df[feature_cols].copy()
 
@@ -175,17 +177,21 @@ def run_experiment(config: ExperimentConfig, *, overwrite: bool = False) -> Expe
             f"[fold {fold_idx}] 学習開始: train={len(train_idx)} valid={len(valid_idx)} features={len(feature_cols)}",
             flush=True,
         )
+        train_weight = sample_weight[train_idx] if sample_weight is not None else None
+        valid_weight = sample_weight[valid_idx] if sample_weight is not None else None
         train_set = lgb.Dataset(
             features.iloc[train_idx],
             label=target[train_idx],
             feature_name=list(feature_cols),
             categorical_feature=categorical_cols or None,
+            weight=train_weight,
         )
         valid_set = lgb.Dataset(
             features.iloc[valid_idx],
             label=target[valid_idx],
             reference=train_set,
             categorical_feature=categorical_cols or None,
+            weight=valid_weight,
         )
 
         booster = lgb.train(
@@ -370,6 +376,22 @@ def _resolve_feature_columns(df: pd.DataFrame, config: ExperimentConfig) -> List
     if config.group_column:
         reserved.add(config.group_column)
     return [col for col in df.columns if col not in reserved]
+
+
+def _compute_sample_weight(config: ExperimentConfig, target: np.ndarray) -> np.ndarray | None:
+    strategy = config.weight_strategy
+    if not strategy:
+        return None
+    if strategy == "inverse_log_target":
+        if not config.log_target:
+            raise ExperimentError("weight_strategy='inverse_log_target' を利用するには log_target=True が必要です。")
+        if np.any(target <= 0):
+            raise ExperimentError("対数変換後のtargetに非正の値が含まれているためweightを計算できません。")
+        weights = 1.0 / target
+        if not np.all(np.isfinite(weights)):
+            raise ExperimentError("weightの計算結果に無効値が含まれています。")
+        return weights
+    raise ExperimentError(f"未対応のweight_strategyが指定されました: {strategy}")
 
 
 def _prepare_categorical_features(
