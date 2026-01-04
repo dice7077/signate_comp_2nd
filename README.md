@@ -81,6 +81,7 @@ python scripts/make_submission.py \
 | 0004_add_many_feature_baseline | add_many_feature_baseline | 多特徴ベースライン + logターゲットLGBM | 0.1999   |
 | 0005_targetyear_geo_features | 0005_targetyear_geo_features | target-year koji/land + mesh人口4期 (lr=0.1, log target) | 0.1475   |
 | 0006_add_tags   | 0006_add_tags | target-year geo + mesh人口4期 + 指定unit/buildingタグone-hot (lr=0.1, log target) | 0.1447   |
+| 0006_add_tags   | 0010_inverse_weights | 0006構成 + log(money_room)逆数weightでL2学習をL1相当に補正 | 0.1431   |
 
 ### 実験一覧（マンション）
 
@@ -90,6 +91,8 @@ python scripts/make_submission.py \
 | 0002_few_features | 0002_few_features | 少数特徴 + logターゲットLGBM (lr=0.1) | 0.1246   |
 | 0003_targetyear_geo_features | 0003_targetyear_geo_features | target-year koji/land + mesh人口4期 (lr=0.1, log target) | 0.1127   |
 | 0004_add_tags   | 0004_add_tags | target-year geo + mesh人口4期 + 指定unit/buildingタグone-hot (lr=0.1, log target) | 0.1098   |
+| 0004_add_tags   | 0006_add_unit_house_area_adjusted | 0004構成 + unit/house areaを維持しつつ unit_house_area_adjusted を追加 | 0.1097   |
+| 0004_add_tags   | 0007_inverse_weights | 0006構成 + log(money_room)逆数weightでL2学習をL1相当に補正 | 0.1088   |
 
 ### 実験一覧（戸建て: same_unit_id）
 
@@ -115,3 +118,4 @@ python scripts/make_submission.py \
 | 0006_add_tags     | 0005_adjust_unit_house_area | `submissions/submission_kodate0006_mansion0005.csv`   | 15.1726      | target-year geo + mesh人口4期 + 指定タグone-hot + unit面積調整 |
 | 0007_same_unit_id (mix) | 0006_same_unit_id (mix) | `submissions/submission_kodate0007mix_mansion0006mix.csv` | 14.9789      | same_unit_id系mix推論（log target, group by unit_id） |
 | 0006_add_tags     | 0005_adjust_unit_house_area + 0006_same_unit_id | `submissions/submission_kodate0006_mansion0005_sameunit0006.csv` | 15.2263      | mansion 0005 + same_unit_id 0006 ミックス（log target, group by unit_id） |
+| 0010_inverse_weights | 0007_inverse_weights | `submissions/submission_kodate0010_mansion0007.csv`   | 14.8860      | inverse weight補正組合せ（round有り） |
