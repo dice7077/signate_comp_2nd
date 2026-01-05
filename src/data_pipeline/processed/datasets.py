@@ -237,6 +237,12 @@ FEATURE_PLAN_OVERRIDES: Dict[Tuple[str, str], List[str]] = {
     ("mansion", "0004_add_tags"): FEATURE_PLAN["mansion"] + list(MANSION_TAG_FEATURES),
     (
         "mansion",
+        "0007_cv_building_id",
+    ): FEATURE_PLAN["mansion"]
+    + list(MANSION_TAG_FEATURES)
+    + ["building_id", "unit_id"],
+    (
+        "mansion",
         "0006_same_unit_id",
     ): FEATURE_PLAN["mansion"]
     + list(MANSION_TAG_FEATURES)
@@ -257,12 +263,26 @@ FEATURE_PLAN_OVERRIDES: Dict[Tuple[str, str], List[str]] = {
     + list(KODATE_TAG_FEATURES)
     + ["unit_id"]
     + list(SAME_UNIT_HISTORY_FEATURES),
+    (
+        "kodate",
+        "0009_same_unit_features_all",
+    ): FEATURE_PLAN["kodate"]
+    + list(KODATE_TAG_FEATURES)
+    + ["unit_id"]
+    + list(SAME_UNIT_HISTORY_FEATURES),
 }
 
 SAME_UNIT_ID_DATASET_CONFIGS: Dict[Tuple[str, str], Dict[str, object]] = {
     ("mansion", "0006_same_unit_id"): {},
     ("kodate", "0007_same_unit_id"): {},
     ("kodate", "0008_test_202207only"): {"test_known_target_ym": 202207},
+    (
+        "kodate",
+        "0009_same_unit_features_all",
+    ): {
+        "drop_rows_without_history": False,
+        "test_only_known_units": False,
+    },
 }
 
 COLUMN_SOURCES: Dict[str, str] = {
@@ -553,7 +573,7 @@ def _summarize_sources(features: Sequence[str]) -> Dict[str, List[str]]:
 class _SameUnitIdCustomizer:
     """
     target_ym を利用した unit_id ごとの過去 money_room 特徴量を構築し、
-    条件に合致しない行を除外するカスタマイザ。
+    設定に応じて行の除外や保持を切り替えるカスタマイザ。
     """
 
     BUCKET_SPECS: Tuple[Tuple[str, int, int | None], ...] = (
@@ -565,11 +585,19 @@ class _SameUnitIdCustomizer:
     )
     FEATURE_NAMES: Tuple[str, ...] = SAME_UNIT_HISTORY_FEATURES
 
-    def __init__(self, *, test_known_target_ym: int | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        test_known_target_ym: int | None = None,
+        drop_rows_without_history: bool = True,
+        test_only_known_units: bool = True,
+    ) -> None:
         self._unit_histories: Dict[int, Tuple[np.ndarray, np.ndarray]] | None = None
         self._known_units: set[int] = set()
         self._test_known_units: set[int] | None = None
         self._test_known_target_ym = test_known_target_ym
+        self._drop_rows_without_history = drop_rows_without_history
+        self._test_only_known_units = test_only_known_units
 
     def transform(self, df: pd.DataFrame, split: str) -> pd.DataFrame:
         if "unit_id" not in df.columns or "target_ym" not in df.columns:
@@ -590,6 +618,9 @@ class _SameUnitIdCustomizer:
         if "money_room" not in df.columns:
             raise ProcessedDatasetError("train split には money_room 列が必要です。")
         self._fit_history(df)
+        if not self._drop_rows_without_history:
+            df_with_features = df.copy()
+            return self._append_history_features(df_with_features)
         mask = self._rows_with_history(df)
         df_filtered = df.loc[mask].copy()
         if df_filtered.empty:
@@ -600,7 +631,10 @@ class _SameUnitIdCustomizer:
 
     def _transform_test(self, df: pd.DataFrame) -> pd.DataFrame:
         allowed_units = self._test_known_units if self._test_known_units is not None else self._known_units
-        df_filtered = df.loc[df["unit_id"].isin(allowed_units)].copy()
+        if self._test_only_known_units:
+            df_filtered = df.loc[df["unit_id"].isin(allowed_units)].copy()
+        else:
+            df_filtered = df.copy()
         if df_filtered.empty:
             return self._ensure_feature_columns(df_filtered)
         return self._append_history_features(df_filtered)

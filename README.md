@@ -56,6 +56,29 @@ python scripts/run_experiment.py \
 - `summary.json`（実験メタ情報）
 - `code/` 配下に実行時の `run_experiment.py` と CLI パラメータをスナップショット
 
+### ハイパーパラメータ探索（Optuna）
+
+`experiments/mansion/0007_inverse_weights` など既存構成を基に LightGBM パラメータを探索する場合は `scripts/tune_lightgbm_optuna.py` を使う。各試行は通常の `run_experiment.py` と同じ5-fold学習を行うため、試行回数はGPU/CPUリソースと相談して設定する。
+
+```
+source .venv/bin/activate
+python scripts/tune_lightgbm_optuna.py \
+  --config experiments/mansion/0007_inverse_weights/config.json \
+  --n-trials 20 \
+  --trial-prefix mansion0077_optuna_ \
+  --summary-output experiments/mansion/0007_inverse_weights/optuna_summary.json \
+  --export-config experiments/mansion/0007_inverse_weights/config_optuna_best.json
+```
+
+- デフォルトでは各試行完了後に成果物ディレクトリを削除する（`--keep-artifacts` で抑止可）。
+- 各試行の成果物はデフォルトで `experiments/<type>/<base_experiment>/optuna_trials/` 以下にまとまり、`experiments/mansion/` 直下にディレクトリが増えにくい（`--trial-subdir` で変更可）。
+- `--trial-prefix` で `optuna_trials` 配下の試行ディレクトリ名（例: `trial_0000`）を制御できる。
+- `--trial-run-name 0001_optuna` のように指定すると `optuna_trials/0001_optuna/` 配下に成果物・SQLite storage を隔離でき、複数の探索を分けて保存しやすい（同じランを継続する場合は同じ名前を再指定）。
+- 何も指定しなくても `experiments/<type>/<base_experiment>/optuna_trials/optuna_study.db` に Optuna の SQLite storage を作成し、`--load-if-exists` も自動有効になるため、同じコマンドを再実行すれば探索を継続できる（無効化したい場合は `--no-default-storage`）。
+- `--export-config` を指定するとベストハイパーパラメータを書き込んだ新しい ExperimentConfig を出力する。得られたファイルを `scripts/run_experiment.py --config ...` で再学習すれば完全な成果物が得られる。
+- `--num-boost-round` `--early-stopping-rounds` を指定すれば探索時のみラウンド数を短縮し、最終Experimentは別途フルラウンドで再学習する運用も可能。
+- 粗い探索を高速に回すには `--fast-fold-index 1` を指定すると fold=1 のみで評価される（成果物は保存されない）。このモード時のみ LightGBM の pruning callback が有効になり、`--pruner median` / `--pruner percentile` などで早期終了できる（`--pruner-warmup-steps` と `--pruner-percentile` も併用可）。
+
 ### 提出ファイルの生成
 
 任意の kodate/mansion 推論結果を結合して提出 CSV を作る:
@@ -82,6 +105,7 @@ python scripts/make_submission.py \
 | 0005_targetyear_geo_features | 0005_targetyear_geo_features | target-year koji/land + mesh人口4期 (lr=0.1, log target) | 0.1475   |
 | 0006_add_tags   | 0006_add_tags | target-year geo + mesh人口4期 + 指定unit/buildingタグone-hot (lr=0.1, log target) | 0.1447   |
 | 0006_add_tags   | 0010_inverse_weights | 0006構成 + log(money_room)逆数weightでL2学習をL1相当に補正 | 0.1431   |
+| 0009_same_unit_features_all | 0011_add_same_unit_id | target-year geo + mesh人口4期 + 指定タグ + 同一unit履歴(log)を全データに付与し inverse weight で学習 | 0.1672   |
 
 ### 実験一覧（マンション）
 

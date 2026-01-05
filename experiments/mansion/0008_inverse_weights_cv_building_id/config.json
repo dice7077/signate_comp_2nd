@@ -1,8 +1,8 @@
 {
   "type_label": "mansion",
-  "dataset_version": "0004_add_tags",
-  "experiment_name": "0005_adjust_unit_house_area",
-  "description": "mansion tags + adjusted unit/house area usage",
+  "dataset_version": "0007_cv_building_id",
+  "experiment_name": "0008_inverse_weights_cv_building_id",
+  "description": "mansion tags + adjusted unit/house area + inverse log-target weights with building_id GroupKFold",
   "folds": 5,
   "random_state": 42,
   "num_boost_round": 8000,
@@ -37,6 +37,7 @@
     "balcony_area",
     "dwelling_unit_window_angle",
     "room_count",
+    "unit_area",
     "unit_house_area_adjusted",
     "floor_plan_code",
     "flg_investment",
@@ -46,6 +47,7 @@
     "addr_all",
     "walk_distance1",
     "walk_distance2",
+    "house_area",
     "room_kaisuu",
     "snapshot_window_angle",
     "madori_number_all",
@@ -113,7 +115,7 @@
     "land_usage_code"
   ],
   "progress_period": 400,
-  "log_target": true
+  "log_target": true,
+  "group_column": "building_id",
+  "weight_strategy": "inverse_log_target"
 }
-
-
