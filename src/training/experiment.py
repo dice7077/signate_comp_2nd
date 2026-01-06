@@ -60,6 +60,15 @@ class BucketAnalysisConfig:
     use_building: bool = True
 
 
+PRE_DEDUP_BUCKET_SPECS: Tuple[Tuple[str, str], ...] = (
+    ("0", "unit_id被り0件"),
+    ("1", "unit_id被り1件"),
+    ("2", "unit_id被り2件"),
+    ("3", "unit_id被り3件"),
+    ("4+", "unit_id被り4件以上"),
+)
+
+
 @dataclass
 class ExperimentConfig:
     type_label: str
@@ -127,12 +136,23 @@ def run_experiment(config: ExperimentConfig, *, overwrite: bool = False) -> Expe
     overlap_analysis = None
     category_specs: Tuple[Tuple[str, str], ...] | None = None
     if config.bucket_analysis:
-        overlap_analysis = _prepare_overlap_analysis(
-            train_df=train_df,
-            test_df=test_df,
-            id_column=config.id_column,
-            config=config.bucket_analysis,
+        use_pre_dedup_overlap = (
+            not config.bucket_analysis.use_building
+            and _has_pre_dedup_overlap_columns(train_df)
         )
+        if use_pre_dedup_overlap:
+            overlap_analysis = _prepare_pre_dedup_overlap_analysis(
+                train_df=train_df,
+                test_df=test_df,
+                id_column=config.id_column,
+            )
+        else:
+            overlap_analysis = _prepare_overlap_analysis(
+                train_df=train_df,
+                test_df=test_df,
+                id_column=config.id_column,
+                config=config.bucket_analysis,
+            )
         category_specs = overlap_analysis["category_specs"]
     train_overlap_lookup: pd.DataFrame | None = None
     if overlap_analysis is not None:
@@ -327,6 +347,23 @@ def run_experiment(config: ExperimentConfig, *, overwrite: bool = False) -> Expe
             "y_pred": oof_predictions,
         }
     )
+    pre_dedup_artifacts = None
+    if "pre_dedup_unit_overlap_bucket" in train_df.columns:
+        aux_columns = [config.id_column, "pre_dedup_unit_overlap_bucket"]
+        for candidate in ("pre_dedup_unit_overlap_count", "pre_dedup_unit_size"):
+            if candidate in train_df.columns:
+                aux_columns.append(candidate)
+        dedup_assignments = train_df[aux_columns].copy()
+        oof_df = oof_df.merge(
+            dedup_assignments,
+            on=config.id_column,
+            how="left",
+            validate="one_to_one",
+        )
+        pre_dedup_artifacts = _persist_pre_dedup_metrics(
+            oof_df=oof_df,
+            reports_dir=reports_dir,
+        )
     bucket_artifacts = None
     if overlap_analysis is not None:
         oof_df = oof_df.merge(
@@ -386,6 +423,8 @@ def run_experiment(config: ExperimentConfig, *, overwrite: bool = False) -> Expe
     }
     if bucket_artifacts:
         artifacts["bucket_analysis"] = bucket_artifacts
+    if pre_dedup_artifacts:
+        artifacts["pre_dedup_overlap_metrics"] = pre_dedup_artifacts
 
     summary_payload = {
         "type_label": config.type_label,
@@ -532,6 +571,63 @@ def _prepare_overlap_analysis(
     }
 
 
+def _has_pre_dedup_overlap_columns(df: pd.DataFrame) -> bool:
+    required = [
+        "pre_dedup_unit_overlap_count",
+        "pre_dedup_unit_overlap_bucket",
+        "pre_dedup_overlap_category",
+    ]
+    return all(column in df.columns for column in required)
+
+
+def _prepare_pre_dedup_overlap_analysis(
+    *,
+    train_df: pd.DataFrame,
+    test_df: pd.DataFrame,
+    id_column: str,
+) -> Dict[str, pd.DataFrame | Tuple[Tuple[str, str], ...]]:
+    required = [
+        "pre_dedup_unit_overlap_count",
+        "pre_dedup_unit_overlap_bucket",
+        "pre_dedup_overlap_category",
+    ]
+    missing = [col for col in required if col not in train_df.columns]
+    if missing:
+        raise ExperimentError(
+            "pre_dedup overlap 列が不足しています: " + ", ".join(missing)
+        )
+
+    category_specs = get_category_specs(False)
+    label_map = dict(category_specs)
+
+    def build(df: pd.DataFrame) -> pd.DataFrame:
+        subset = pd.DataFrame(
+            {
+                id_column: df[id_column],
+                "unit_overlap_count": df["pre_dedup_unit_overlap_count"].astype(int),
+                "unit_overlap_bucket": df["pre_dedup_unit_overlap_bucket"].astype("string"),
+                "overlap_category": df["pre_dedup_overlap_category"].astype("string"),
+            }
+        )
+        label_column = "pre_dedup_overlap_category_label"
+        if label_column in df.columns:
+            subset["overlap_category_label"] = df[label_column].astype("string")
+        else:
+            subset["overlap_category_label"] = subset["overlap_category"].map(label_map)
+        return subset
+
+    train_assignments = build(train_df)
+    test_assignments = None
+    if _has_pre_dedup_overlap_columns(test_df):
+        test_assignments = build(test_df)
+
+    return {
+        "train_assignments": train_assignments,
+        "test_assignments": test_assignments,
+        "category_specs": category_specs,
+    }
+
+
 def _persist_bucket_artifacts(
     *,
     oof_df: pd.DataFrame,
@@ -583,6 +679,40 @@ def _persist_bucket_artifacts(
     return artifacts
 
 
+def _persist_pre_dedup_metrics(
+    *,
+    oof_df: pd.DataFrame,
+    reports_dir: Path,
+) -> Dict[str, Any] | None:
+    column = "pre_dedup_unit_overlap_bucket"
+    if column not in oof_df.columns:
+        return None
+    summary_df = _pre_dedup_metrics_dataframe(
+        bucket_keys=oof_df[column].to_numpy(),
+        y_true=oof_df["y_true"].to_numpy(),
+        y_pred=oof_df["y_pred"].to_numpy(),
+        specs=PRE_DEDUP_BUCKET_SPECS,
+    )
+    csv_path = reports_dir / "pre_dedup_unit_overlap_metrics.csv"
+    json_path = reports_dir / "pre_dedup_unit_overlap_metrics.json"
+    summary_df.to_csv(csv_path, index=False)
+    summary_df.to_json(json_path, orient="records", force_ascii=False, indent=2)
+    print("[pre_dedup] unit overlap summary:")
+    for _, row in summary_df.iterrows():
+        label = row["label"]
+        count = int(row["data_id_count"])
+        ratio = row["ratio"]
+        mape = row["mape"]
+        ratio_pct = ratio * 100 if pd.notna(ratio) else 0.0
+        mape_text = f"{mape:.6f}" if pd.notna(mape) else "N/A"
+        print(f"    - {label}: {count:,} rows ({ratio_pct:.2f}%) MAPE={mape_text}")
+    return {
+        "metrics_csv": str(csv_path.relative_to(PROJECT_ROOT)),
+        "metrics_json": str(json_path.relative_to(PROJECT_ROOT)),
+        "summary": summary_df.to_dict(orient="records"),
+    }
+
+
 def _summarize_bucket_metrics(
     *,
     oof_df: pd.DataFrame,
@@ -601,6 +731,52 @@ def _summarize_bucket_metrics(
     summary_df.to_csv(csv_path, index=False)
     summary_df.to_json(json_path, orient="records", force_ascii=False, indent=2)
     return summary_df, {"csv": csv_path, "json": json_path}
+
+
+def _pre_dedup_metrics_dataframe(
+    *,
+    bucket_keys: np.ndarray,
+    y_true: Sequence[float],
+    y_pred: Sequence[float],
+    specs: Tuple[Tuple[str, str], ...],
+) -> pd.DataFrame:
+    bucket_series = pd.Series(bucket_keys, dtype="string").fillna("unknown")
+    bucket_array = bucket_series.to_numpy(dtype=object)
+    total = len(bucket_array)
+    y_true_arr = np.asarray(y_true, dtype=float)
+    y_pred_arr = np.asarray(y_pred, dtype=float)
+    rows: List[Dict[str, Any]] = []
+    known_keys = [key for key, _ in specs]
+    for key, label in specs:
+        mask = bucket_array == key
+        count = int(np.sum(mask))
+        ratio = (count / total) if total else 0.0
+        mape = _safe_mape(y_true_arr[mask], y_pred_arr[mask]) if count else None
+        rows.append(
+            {
+                "bucket_key": key,
+                "label": label,
+                "data_id_count": count,
+                "ratio": ratio,
+                "mape": mape,
+            }
+        )
+    if total:
+        residual_mask = ~np.isin(bucket_array, known_keys, assume_unique=False)
+        residual_count = int(np.sum(residual_mask))
+        if residual_count:
+            ratio = residual_count / total
+            mape = _safe_mape(y_true_arr[residual_mask], y_pred_arr[residual_mask])
+            rows.append(
+                {
+                    "bucket_key": "other",
+                    "label": "その他",
+                    "data_id_count": residual_count,
+                    "ratio": ratio,
+                    "mape": mape,
+                }
+            )
+    return pd.DataFrame(rows)
 
 
 def _bucket_metrics_dataframe(

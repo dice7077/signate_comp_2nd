@@ -12,7 +12,10 @@ import pandas as pd
 from ..utils.overlap import (
     ALL_OVERLAP_FEATURE_COLUMNS,
     OVERLAP_FEATURE_COLUMNS,
+    UNIT_ONLY_CATEGORY_SPECS,
     UNIT_ONLY_OVERLAP_FEATURE_COLUMNS,
+    assign_overlap_category,
+    bucketize_count,
     compute_overlap_features,
     get_category_specs,
     value_counts,
@@ -293,6 +296,12 @@ FEATURE_PLAN_OVERRIDES: Dict[Tuple[str, str], List[str]] = {
     ): FEATURE_PLAN["kodate"]
     + list(KODATE_TAG_FEATURES)
     + ["unit_id", "unit_overlap_count", "unit_overlap_bucket", "overlap_category"],
+    (
+        "kodate",
+        "0011_no_duplicate_unit_id",
+    ): FEATURE_PLAN["kodate"]
+    + list(KODATE_TAG_FEATURES)
+    + ["unit_id", "unit_overlap_count", "unit_overlap_bucket", "overlap_category"],
 }
 
 SAME_UNIT_ID_DATASET_CONFIGS: Dict[Tuple[str, str], Dict[str, object]] = {
@@ -305,6 +314,17 @@ SAME_UNIT_ID_DATASET_CONFIGS: Dict[Tuple[str, str], Dict[str, object]] = {
     ): {
         "drop_rows_without_history": False,
         "test_only_known_units": False,
+    },
+}
+
+UNIT_ID_DEDUP_CONFIGS: Dict[Tuple[str, str], Dict[str, object]] = {
+    (
+        "kodate",
+        "0011_no_duplicate_unit_id",
+    ): {
+        "unit_column": "unit_id",
+        "id_column": "data_id",
+        "random_state": 20250106,
     },
 }
 
@@ -378,6 +398,10 @@ def build_processed_datasets(
         customizer_config = SAME_UNIT_ID_DATASET_CONFIGS.get((type_label, version))
         if customizer_config is not None:
             customizer = _SameUnitIdCustomizer(**customizer_config)
+        deduplicator = None
+        deduplicator_config = UNIT_ID_DEDUP_CONFIGS.get((type_label, version))
+        if deduplicator_config is not None:
+            deduplicator = _UnitIdDeduplicator(**deduplicator_config)
 
         needs_overlap = _requires_overlap_features(features)
         use_building_overlap = _uses_building_overlap_features(features)
@@ -396,6 +420,8 @@ def build_processed_datasets(
             df = _apply_target_year_alignment(df)
             if customizer is not None:
                 df = customizer.transform(df, split)
+            if deduplicator is not None:
+                df = deduplicator.transform(df, split)
 
             if needs_overlap:
                 if "unit_id" not in df.columns:
@@ -407,7 +433,10 @@ def build_processed_datasets(
                         f"{type_label}/{version} は building_id 列が必要ですが見つかりません。"
                     )
                 if split == "train":
-                    overlap_unit_counts = value_counts(df["unit_id"])
+                    if deduplicator is not None and deduplicator.unit_reference_counts is not None:
+                        overlap_unit_counts = deduplicator.unit_reference_counts
+                    else:
+                        overlap_unit_counts = value_counts(df["unit_id"])
                     overlap_building_counts = (
                         value_counts(df["building_id"]) if use_building_overlap else None
                     )
@@ -438,6 +467,8 @@ def build_processed_datasets(
                 )
 
             result = df[columns].copy()
+            if deduplicator is not None:
+                deduplicator.attach_auxiliary_columns(result, df)
             result.to_parquet(output_path, index=False)
             outputs.append(output_path)
 
@@ -875,6 +906,98 @@ class _SameUnitIdCustomizer:
         valid_indices = indices[valid_month]
         result[valid_indices] = years[valid_month] * 12 + (months[valid_month] - 1)
         return result
+
+
+class _UnitIdDeduplicator:
+    """
+    unit_id ごとに1行のみ残すようランダムに重複排除し、元の被り情報を補完するカスタマイザ。
+    """
+
+    AUXILIARY_COLUMNS: Tuple[str, ...] = (
+        "pre_dedup_unit_size",
+        "pre_dedup_unit_overlap_count",
+        "pre_dedup_unit_overlap_bucket",
+        "pre_dedup_overlap_category",
+        "pre_dedup_overlap_category_label",
+    )
+
+    def __init__(self, *, unit_column: str, id_column: str, random_state: int = 42) -> None:
+        self._unit_column = unit_column
+        self._id_column = id_column
+        self._random_state = int(random_state)
+        self._unit_reference_counts: pd.Series | None = None
+
+    @property
+    def unit_reference_counts(self) -> pd.Series | None:
+        return self._unit_reference_counts
+
+    def transform(self, df: pd.DataFrame, split: str) -> pd.DataFrame:
+        if split == "train":
+            return self._transform_train(df)
+        if split == "test":
+            return self._transform_test(df)
+        raise ProcessedDatasetError(f"未対応の split が指定されました: {split}")
+
+    def attach_auxiliary_columns(self, output_df: pd.DataFrame, source_df: pd.DataFrame) -> None:
+        for column in self.AUXILIARY_COLUMNS:
+            if column in source_df.columns and column not in output_df.columns:
+                output_df[column] = source_df[column]
+
+    def _transform_train(self, df: pd.DataFrame) -> pd.DataFrame:
+        if self._unit_column not in df.columns:
+            raise ProcessedDatasetError("unit_id 列が不足しているため重複排除できません。")
+        base = df.copy()
+        self._unit_reference_counts = value_counts(base[self._unit_column])
+        if self._unit_reference_counts.empty:
+            self._unit_reference_counts = pd.Series(dtype="int64")
+        deduplicated = self._deduplicate(base)
+        return self._attach_pre_dedup_columns(deduplicated)
+
+    def _transform_test(self, df: pd.DataFrame) -> pd.DataFrame:
+        if self._unit_reference_counts is None:
+            raise ProcessedDatasetError("train split を処理してから test split を処理してください。")
+        enriched = df.copy()
+        return self._attach_pre_dedup_columns(enriched)
+
+    def _deduplicate(self, df: pd.DataFrame) -> pd.DataFrame:
+        valid_mask = df[self._unit_column].notna()
+        if not valid_mask.any():
+            return df
+        candidates = df.loc[valid_mask].copy()
+        others = df.loc[~valid_mask].copy()
+        shuffled = candidates.sample(frac=1.0, random_state=self._random_state)
+        kept = (
+            shuffled.drop_duplicates(subset=[self._unit_column], keep="first")
+            .sort_index(kind="mergesort")
+            .copy()
+        )
+        combined = pd.concat([kept, others], axis=0)
+        combined.sort_index(inplace=True, kind="mergesort")
+        return combined
+
+    def _attach_pre_dedup_columns(self, df: pd.DataFrame) -> pd.DataFrame:
+        counts = self._lookup_total_counts(df[self._unit_column])
+        overlap = counts.copy()
+        mask = df[self._unit_column].notna()
+        if mask.any():
+            overlap.loc[mask] = (overlap.loc[mask] - 1).clip(lower=0)
+        df["pre_dedup_unit_size"] = counts.astype("int64")
+        df["pre_dedup_unit_overlap_count"] = overlap.astype("int64")
+        df["pre_dedup_unit_overlap_bucket"] = overlap.map(bucketize_count).astype("string")
+        df["pre_dedup_overlap_category"] = overlap.map(
+            lambda cnt: assign_overlap_category(int(cnt), 0, False)
+            if pd.notna(cnt)
+            else "unit_0"
+        ).astype("string")
+        label_map = dict(UNIT_ONLY_CATEGORY_SPECS)
+        df["pre_dedup_overlap_category_label"] = df["pre_dedup_overlap_category"].map(label_map).astype("string")
+        return df
+
+    def _lookup_total_counts(self, series: pd.Series) -> pd.Series:
+        if self._unit_reference_counts is None or self._unit_reference_counts.empty:
+            return pd.Series(0, index=series.index, dtype="int64")
+        mapped = series.map(self._unit_reference_counts).fillna(0).astype("int64")
+        return mapped
 
 
 __all__ = ["build_processed_datasets", "ProcessedDatasetError"]
