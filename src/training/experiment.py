@@ -7,7 +7,7 @@ import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Sequence
+from typing import Any, Dict, List, Sequence, Tuple
 
 import lightgbm as lgb
 import matplotlib
@@ -20,6 +20,11 @@ import seaborn as sns
 from sklearn.model_selection import GroupKFold, KFold
 
 from ..data_pipeline.processed.datasets import TYPE_DIRECTORIES
+from ..data_pipeline.utils.overlap import (
+    compute_overlap_features,
+    get_category_specs,
+    value_counts,
+)
 from ..data_pipeline.utils.paths import DATA_DIR, PROJECT_ROOT
 
 matplotlib.use("Agg")
@@ -48,6 +53,14 @@ def default_lightgbm_params() -> Dict[str, Any]:
     }
 
 @dataclass
+class BucketAnalysisConfig:
+    unit_column: str
+    building_column: str | None = None
+    output_prefix: str = "unit_building_overlap"
+    use_building: bool = True
+
+
+@dataclass
 class ExperimentConfig:
     type_label: str
     dataset_version: str
@@ -66,6 +79,11 @@ class ExperimentConfig:
     log_target: bool = False
     group_column: str | None = None
     weight_strategy: str | None = None
+    bucket_analysis: BucketAnalysisConfig | None = None
+
+    def __post_init__(self) -> None:
+        if self.bucket_analysis and isinstance(self.bucket_analysis, dict):
+            self.bucket_analysis = BucketAnalysisConfig(**self.bucket_analysis)
 
 
 @dataclass
@@ -106,6 +124,19 @@ def run_experiment(config: ExperimentConfig, *, overwrite: bool = False) -> Expe
 
     train_df = pd.read_parquet(train_path)
     test_df = pd.read_parquet(test_path)
+    overlap_analysis = None
+    category_specs: Tuple[Tuple[str, str], ...] | None = None
+    if config.bucket_analysis:
+        overlap_analysis = _prepare_overlap_analysis(
+            train_df=train_df,
+            test_df=test_df,
+            id_column=config.id_column,
+            config=config.bucket_analysis,
+        )
+        category_specs = overlap_analysis["category_specs"]
+    train_overlap_lookup: pd.DataFrame | None = None
+    if overlap_analysis is not None:
+        train_overlap_lookup = overlap_analysis["train_assignments"].set_index(config.id_column)
     group_values: pd.Series | None = None
     if config.group_column:
         if config.group_column not in train_df.columns:
@@ -245,6 +276,24 @@ def run_experiment(config: ExperimentConfig, *, overwrite: bool = False) -> Expe
             "train_time_sec": float(fold_time),
         }
         fold_metrics.append(fold_entry)
+        if train_overlap_lookup is not None and category_specs is not None:
+            valid_ids = train_df.iloc[valid_idx][config.id_column]
+            overlap_subset = train_overlap_lookup.loc[valid_ids]
+            bucket_summary = _bucket_metrics_dataframe(
+                bucket_keys=overlap_subset["overlap_category"].to_numpy(),
+                y_true=target_raw[valid_idx],
+                y_pred=valid_pred,
+                category_specs=category_specs,
+            )
+            print(f"[fold {fold_idx}] bucket metrics:", flush=True)
+            for _, row in bucket_summary.iterrows():
+                count = int(row["data_id_count"])
+                ratio_pct = row["ratio"] * 100 if row["ratio"] is not None else 0.0
+                mape_text = f"{row['mape']:.6f}" if row["mape"] is not None else "N/A"
+                print(
+                    f"    - {row['label']}: {count:,} rows ({ratio_pct:.2f}%) MAPE={mape_text}",
+                    flush=True,
+                )
         print(
             "[fold {fold}] 完了: best_iter={best_iter} "
             "MAPE={mape:.6f} MAE={mae:.2f} RMSE={rmse:.2f} time={time:.1f}s".format(
@@ -278,6 +327,20 @@ def run_experiment(config: ExperimentConfig, *, overwrite: bool = False) -> Expe
             "y_pred": oof_predictions,
         }
     )
+    bucket_artifacts = None
+    if overlap_analysis is not None:
+        oof_df = oof_df.merge(
+            overlap_analysis["train_assignments"],
+            on=config.id_column,
+            how="left",
+            validate="one_to_one",
+        )
+        bucket_artifacts = _persist_bucket_artifacts(
+            oof_df=oof_df,
+            overlap_analysis=overlap_analysis,
+            config=config,
+            reports_dir=reports_dir,
+        )
     oof_df.to_parquet(oof_path, index=False)
 
     test_df_out = pd.DataFrame(
@@ -321,6 +384,8 @@ def run_experiment(config: ExperimentConfig, *, overwrite: bool = False) -> Expe
         "plots": {name: str(path.relative_to(PROJECT_ROOT)) for name, path in plot_paths.items()},
         "models": model_paths,
     }
+    if bucket_artifacts:
+        artifacts["bucket_analysis"] = bucket_artifacts
 
     summary_payload = {
         "type_label": config.type_label,
@@ -405,6 +470,165 @@ def _prepare_categorical_features(
         dtype = CategoricalDtype(categories=categories, ordered=False)
         train_df[col] = train_series.astype(dtype)
         test_df[col] = test_series.astype(dtype)
+
+
+def _prepare_overlap_analysis(
+    *,
+    train_df: pd.DataFrame,
+    test_df: pd.DataFrame,
+    id_column: str,
+    config: BucketAnalysisConfig,
+) -> Dict[str, pd.DataFrame | None]:
+    required = [config.unit_column]
+    if config.use_building and config.building_column:
+        required.append(config.building_column)
+    missing = [col for col in required if col not in train_df.columns]
+    if missing:
+        raise ExperimentError(
+            "bucket_analysis で指定された列が train データに存在しません: "
+            + ", ".join(missing)
+        )
+
+    unit_counts = value_counts(train_df[config.unit_column])
+    building_counts = (
+        value_counts(train_df[config.building_column])
+        if config.use_building and config.building_column
+        else None
+    )
+    category_specs = get_category_specs(config.use_building)
+
+    train_assignments = compute_overlap_features(
+        df=train_df,
+        id_column=id_column,
+        unit_column=config.unit_column,
+        building_column=config.building_column,
+        unit_reference_counts=unit_counts,
+        building_reference_counts=building_counts,
+        subtract_self=True,
+        include_label=True,
+        use_building=config.use_building,
+        category_specs=category_specs,
+    )
+
+    test_assignments = None
+    if all(col in test_df.columns for col in required):
+        test_assignments = compute_overlap_features(
+            df=test_df,
+            id_column=id_column,
+            unit_column=config.unit_column,
+            building_column=config.building_column,
+            unit_reference_counts=unit_counts,
+            building_reference_counts=building_counts,
+            subtract_self=False,
+            include_label=True,
+            use_building=config.use_building,
+            category_specs=category_specs,
+        )
+
+    return {
+        "train_assignments": train_assignments,
+        "test_assignments": test_assignments,
+        "category_specs": category_specs,
+    }
+
+
+def _persist_bucket_artifacts(
+    *,
+    oof_df: pd.DataFrame,
+    overlap_analysis: Dict[str, pd.DataFrame | None],
+    config: ExperimentConfig,
+    reports_dir: Path,
+) -> Dict[str, str]:
+    assert config.bucket_analysis is not None  # for mypy/static analyzers
+    prefix = config.bucket_analysis.output_prefix
+
+    train_assign_path = reports_dir / f"{prefix}_train_assignments.parquet"
+    overlap_analysis["train_assignments"].to_parquet(train_assign_path, index=False)  # type: ignore[arg-type]
+
+    test_assign_path = None
+    test_assignments = overlap_analysis.get("test_assignments")
+    if isinstance(test_assignments, pd.DataFrame):
+        test_assign_path = reports_dir / f"{prefix}_test_assignments.parquet"
+        test_assignments.to_parquet(test_assign_path, index=False)
+
+    summary_df, metric_paths = _summarize_bucket_metrics(
+        oof_df=oof_df,
+        prefix=prefix,
+        reports_dir=reports_dir,
+        category_specs=overlap_analysis["category_specs"],  # type: ignore[arg-type]
+    )
+    metric_paths_rel = {
+        "metrics_csv": str(metric_paths["csv"].relative_to(PROJECT_ROOT)),
+        "metrics_json": str(metric_paths["json"].relative_to(PROJECT_ROOT)),
+    }
+    artifacts = {
+        **metric_paths_rel,
+        "train_assignments": str(train_assign_path.relative_to(PROJECT_ROOT)),
+    }
+    if test_assign_path is not None:
+        artifacts["test_assignments"] = str(test_assign_path.relative_to(PROJECT_ROOT))
+    artifacts["summary"] = summary_df.to_dict(orient="records")
+
+    # 解析結果を console に軽く表示しておくとログ確認が楽になる
+    print(f"[bucket] {prefix} summary:")
+    for _, row in summary_df.iterrows():
+        label = row["label"]
+        count = int(row["data_id_count"])
+        ratio = row["ratio"]
+        mape = row["mape"]
+        ratio_pct = ratio * 100 if pd.notna(ratio) else 0.0
+        mape_text = f"{mape:.6f}" if pd.notna(mape) else "N/A"
+        print(f"    - {label}: {count:,} rows ({ratio_pct:.2f}%) MAPE={mape_text}")
+
+    return artifacts
+
+
+def _summarize_bucket_metrics(
+    *,
+    oof_df: pd.DataFrame,
+    prefix: str,
+    reports_dir: Path,
+    category_specs: Tuple[Tuple[str, str], ...],
+) -> tuple[pd.DataFrame, Dict[str, Path]]:
+    summary_df = _bucket_metrics_dataframe(
+        bucket_keys=oof_df["overlap_category"].to_numpy(),
+        y_true=oof_df["y_true"].to_numpy(),
+        y_pred=oof_df["y_pred"].to_numpy(),
+        category_specs=category_specs,
+    )
+    csv_path = reports_dir / f"{prefix}_bucket_metrics.csv"
+    json_path = reports_dir / f"{prefix}_bucket_metrics.json"
+    summary_df.to_csv(csv_path, index=False)
+    summary_df.to_json(json_path, orient="records", force_ascii=False, indent=2)
+    return summary_df, {"csv": csv_path, "json": json_path}
+
+
+def _bucket_metrics_dataframe(
+    *,
+    bucket_keys: np.ndarray,
+    y_true: Sequence[float],
+    y_pred: Sequence[float],
+    category_specs: Tuple[Tuple[str, str], ...],
+) -> pd.DataFrame:
+    total = len(bucket_keys)
+    y_true_arr = np.asarray(y_true, dtype=float)
+    y_pred_arr = np.asarray(y_pred, dtype=float)
+    rows: List[Dict[str, Any]] = []
+    for key, label in category_specs:
+        mask = bucket_keys == key
+        count = int(np.sum(mask))
+        ratio = (count / total) if total else 0.0
+        mape = _safe_mape(y_true_arr[mask], y_pred_arr[mask]) if count else None
+        rows.append(
+            {
+                "bucket_key": key,
+                "label": label,
+                "data_id_count": count,
+                "ratio": ratio,
+                "mape": mape,
+            }
+        )
+    return pd.DataFrame(rows)
 
 
 def _fold_progress_callback(fold_idx: int, period: int):

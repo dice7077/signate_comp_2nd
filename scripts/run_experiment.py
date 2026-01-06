@@ -269,6 +269,20 @@ def print_summary(result: ExperimentResult) -> None:
             f"MAPE={entry['mape']:.6f} MAE={entry['mae']:.2f} "
             f"RMSE={entry['rmse']:.2f} best_iter={entry['best_iteration']}"
         )
+    bucket_artifacts = result.artifacts.get("bucket_analysis")
+    if isinstance(bucket_artifacts, dict):
+        summary = bucket_artifacts.get("summary")
+        if summary:
+            print("Bucket metrics:")
+            for row in summary:
+                count = row.get("data_id_count", 0)
+                ratio = row.get("ratio", 0.0)
+                mape = row.get("mape")
+                ratio_pct = ratio * 100 if ratio is not None else 0.0
+                mape_text = f"{mape:.6f}" if mape is not None else "N/A"
+                print(
+                    f"  - {row.get('label')}: {count:,} rows ({ratio_pct:.2f}%) MAPE={mape_text}"
+                )
 
 
 if __name__ == "__main__":

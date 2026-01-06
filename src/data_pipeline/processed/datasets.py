@@ -9,6 +9,14 @@ import numpy as np
 
 import pandas as pd
 
+from ..utils.overlap import (
+    ALL_OVERLAP_FEATURE_COLUMNS,
+    OVERLAP_FEATURE_COLUMNS,
+    UNIT_ONLY_OVERLAP_FEATURE_COLUMNS,
+    compute_overlap_features,
+    get_category_specs,
+    value_counts,
+)
 from ..utils.paths import DATA_DIR, INTERIM_DIR, PROJECT_ROOT
 
 
@@ -95,7 +103,10 @@ SAME_UNIT_HISTORY_FEATURES: Tuple[str, ...] = (
     "money_room_past_24m",
     "money_room_past_over_30m",
 )
-SYNTHETIC_FEATURES: Tuple[str, ...] = SAME_UNIT_HISTORY_FEATURES
+OVERLAP_SYNTHETIC_FEATURES: Tuple[str, ...] = tuple(
+    dict.fromkeys(OVERLAP_FEATURE_COLUMNS + UNIT_ONLY_OVERLAP_FEATURE_COLUMNS)
+)
+SYNTHETIC_FEATURES: Tuple[str, ...] = SAME_UNIT_HISTORY_FEATURES + OVERLAP_SYNTHETIC_FEATURES
 SYNTHETIC_FEATURE_SET = frozenset(SYNTHETIC_FEATURES)
 
 KODATE_UNIT_TAG_COLUMNS: Tuple[str, ...] = (
@@ -248,6 +259,12 @@ FEATURE_PLAN_OVERRIDES: Dict[Tuple[str, str], List[str]] = {
     + list(MANSION_TAG_FEATURES)
     + ["unit_id"]
     + list(SAME_UNIT_HISTORY_FEATURES),
+    (
+        "mansion",
+        "0008_unit_building_overlap",
+    ): FEATURE_PLAN["mansion"]
+    + list(MANSION_TAG_FEATURES)
+    + ["building_id", "unit_id", *OVERLAP_FEATURE_COLUMNS],
     ("kodate", "0006_add_tags"): FEATURE_PLAN["kodate"] + list(KODATE_TAG_FEATURES),
     (
         "kodate",
@@ -270,6 +287,12 @@ FEATURE_PLAN_OVERRIDES: Dict[Tuple[str, str], List[str]] = {
     + list(KODATE_TAG_FEATURES)
     + ["unit_id"]
     + list(SAME_UNIT_HISTORY_FEATURES),
+    (
+        "kodate",
+        "0010_unit_overlap",
+    ): FEATURE_PLAN["kodate"]
+    + list(KODATE_TAG_FEATURES)
+    + ["unit_id", "unit_overlap_count", "unit_overlap_bucket", "overlap_category"],
 }
 
 SAME_UNIT_ID_DATASET_CONFIGS: Dict[Tuple[str, str], Dict[str, object]] = {
@@ -356,6 +379,11 @@ def build_processed_datasets(
         if customizer_config is not None:
             customizer = _SameUnitIdCustomizer(**customizer_config)
 
+        needs_overlap = _requires_overlap_features(features)
+        use_building_overlap = _uses_building_overlap_features(features)
+        overlap_unit_counts = None
+        overlap_building_counts = None
+
         for split in ("train", "test"):
             output_path = version_dir / f"{split}.parquet"
             if output_path.exists() and not overwrite:
@@ -368,6 +396,39 @@ def build_processed_datasets(
             df = _apply_target_year_alignment(df)
             if customizer is not None:
                 df = customizer.transform(df, split)
+
+            if needs_overlap:
+                if "unit_id" not in df.columns:
+                    raise ProcessedDatasetError(
+                        f"{type_label}/{version} は overlap 特徴量に unit_id を必要とします。"
+                    )
+                if use_building_overlap and "building_id" not in df.columns:
+                    raise ProcessedDatasetError(
+                        f"{type_label}/{version} は building_id 列が必要ですが見つかりません。"
+                    )
+                if split == "train":
+                    overlap_unit_counts = value_counts(df["unit_id"])
+                    overlap_building_counts = (
+                        value_counts(df["building_id"]) if use_building_overlap else None
+                    )
+                    subtract_self = True
+                else:
+                    if overlap_unit_counts is None:
+                        raise ProcessedDatasetError(
+                            "train split より前に test split へ overlap 特徴量を適用できません。"
+                        )
+                    subtract_self = False
+
+                df = _attach_overlap_features(
+                    df=df,
+                    id_column="data_id",
+                    unit_column="unit_id",
+                    building_column="building_id" if use_building_overlap else None,
+                    unit_counts=overlap_unit_counts,
+                    building_counts=overlap_building_counts,
+                    subtract_self=subtract_self,
+                    use_building=use_building_overlap,
+                )
 
             columns = _output_columns(split, features)
             missing = [col for col in columns if col not in df.columns]
@@ -459,7 +520,7 @@ def _supplementary_feature_map(features: Sequence[str]) -> Dict[str, List[str]]:
     mapping: Dict[str, List[str]] = {}
     for col in features:
         source = COLUMN_SOURCES.get(col)
-        if not source:
+        if not source or source == "overlap":
             continue
         mapping.setdefault(source, [])
         if col not in mapping[source]:
@@ -568,6 +629,43 @@ def _summarize_sources(features: Sequence[str]) -> Dict[str, List[str]]:
         summary.setdefault(source, [])
         summary[source].append(col)
     return summary
+
+
+def _requires_overlap_features(features: Sequence[str]) -> bool:
+    return any(feature in ALL_OVERLAP_FEATURE_COLUMNS for feature in features)
+
+
+def _uses_building_overlap_features(features: Sequence[str]) -> bool:
+    return any(
+        feature in {"building_overlap_count", "building_overlap_bucket"} for feature in features
+    )
+
+
+def _attach_overlap_features(
+    *,
+    df: pd.DataFrame,
+    id_column: str,
+    unit_column: str,
+    building_column: str | None,
+    unit_counts: pd.Series,
+    building_counts: pd.Series | None,
+    subtract_self: bool,
+    use_building: bool,
+) -> pd.DataFrame:
+    category_specs = get_category_specs(use_building)
+    features = compute_overlap_features(
+        df=df,
+        id_column=id_column,
+        unit_column=unit_column,
+        building_column=building_column,
+        unit_reference_counts=unit_counts,
+        building_reference_counts=building_counts,
+        subtract_self=subtract_self,
+        include_label=False,
+        use_building=use_building,
+        category_specs=category_specs,
+    )
+    return df.merge(features, on=id_column, how="left", validate="one_to_one")
 
 
 class _SameUnitIdCustomizer:
