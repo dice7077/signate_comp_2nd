@@ -56,6 +56,23 @@ python scripts/run_experiment.py \
 - `summary.json`（実験メタ情報）
 - `code/` 配下に実行時の `run_experiment.py` と CLI パラメータをスナップショット
 
+### 実行メモ
+
+- 2026-01-09: `experiments/kodate_same_unit_id/0010_1fold` を config モードで実行。5fold を廃止して全データを 70 iteration だけ学習 (`full_train_only=True`, `early_stopping_rounds=0`)。
+  ```
+  source .venv/bin/activate
+  python scripts/run_experiment.py \
+    --config experiments/kodate_same_unit_id/0010_1fold/config.json \
+    --overwrite
+  ```
+- 2026-01-09: `experiments/mansion_same_unit_id/0007_1fold` を config モードで実行。マンション same_unit_id 版も全データを 800 iteration だけ学習 (`full_train_only=True`, `early_stopping_rounds=0`)。
+  ```
+  source .venv/bin/activate
+  python scripts/run_experiment.py \
+    --config experiments/mansion_same_unit_id/0007_1fold/config.json \
+    --overwrite
+  ```
+
 ### ハイパーパラメータ探索（Optuna）
 
 `experiments/mansion/0007_inverse_weights` など既存構成を基に LightGBM パラメータを探索する場合は `scripts/tune_lightgbm_optuna.py` を使う。各試行は通常の `run_experiment.py` と同じ5-fold学習を行うため、試行回数はGPU/CPUリソースと相談して設定する。
@@ -124,12 +141,14 @@ python scripts/make_submission.py \
 |-----------------|------------|-------------|----------|
 | 0007_same_unit_id | 0007_same_unit_id | 戸建てタグ + 同一unit履歴ログ特徴 (log target, group by unit_id) | 0.0694 |
 | 0008_test_202207only | 0008_test_202207only | 0007ベース + test unit抽出をtrain target_ym=202207重複に限定 | 0.0691 |
+| 0007_same_unit_id | 0010_1fold | 0007構成を踏襲し 5fold をやめて全データを70iter単発学習 (full_train_only) | - |
 
 ### 実験一覧（マンション: same_unit_id）
 
 | Dataset Version | Experiment | Description | Val MAPE |
 |-----------------|------------|-------------|----------|
 | 0006_same_unit_id | 0006_same_unit_id | マンションタグ + 同一unit履歴ログ特徴 (lr=0.03, log target, group by unit_id) | 0.0754 |
+| 0006_same_unit_id | 0007_1fold | 0006構成を踏襲し 5fold をやめて全データを800iter単発学習 (full_train_only) | - |
 
 ### 提出一覧
 
@@ -143,3 +162,5 @@ python scripts/make_submission.py \
 | 0007_same_unit_id (mix) | 0006_same_unit_id (mix) | `submissions/submission_kodate0007mix_mansion0006mix.csv` | 14.9789      | same_unit_id系mix推論（log target, group by unit_id） |
 | 0006_add_tags     | 0005_adjust_unit_house_area + 0006_same_unit_id | `submissions/submission_kodate0006_mansion0005_sameunit0006.csv` | 15.2263      | mansion 0005 + same_unit_id 0006 ミックス（log target, group by unit_id） |
 | 0010_inverse_weights | 0007_inverse_weights | `submissions/submission_kodate0010_mansion0007.csv`   | 14.8860      | inverse weight補正組合せ（round有り） |
+| 0010_inverse_weights + 0010_1fold same_unit上書き | 0007_inverse_weights | `submissions/submission_kodate0010inv_sameunit0010fold_mansion0007.csv` | 14.8041 | kodate same_unit_id (0010_1fold) を優先し、それ以外は0010_inverse_weights |
+| 0010_inverse_weights + 0010_1fold same_unit上書き | 0007_inverse_weights + 0007_1fold same_unit上書き | `submissions/submission_kodate0010inv_sameunit0010fold_mansion0007inv_sameunit0007fold.csv` | 14.8905 | kodate/mansion双方で same_unit_id 1fold 予測を優先 |

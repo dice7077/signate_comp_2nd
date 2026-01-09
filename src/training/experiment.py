@@ -87,6 +87,7 @@ class ExperimentConfig:
     progress_period: int = 500
     log_target: bool = False
     group_column: str | None = None
+    full_train_only: bool = False
     weight_strategy: str | None = None
     bucket_analysis: BucketAnalysisConfig | None = None
 
@@ -106,7 +107,7 @@ class ExperimentResult:
 
 def run_experiment(config: ExperimentConfig, *, overwrite: bool = False) -> ExperimentResult:
     """
-    加工済みデータを用いて LightGBM モデルを5-fold CVで学習し、各種成果物を保存する。
+    加工済みデータを用いて LightGBM モデルを学習し、CVまたは全量学習の成果物を保存する。
     """
 
     _validate_config(config)
@@ -211,7 +212,14 @@ def run_experiment(config: ExperimentConfig, *, overwrite: bool = False) -> Expe
     lgbm_params.setdefault("feature_pre_filter", False)
     lgbm_params.setdefault("verbosity", -1)
 
-    if config.group_column:
+    if config.full_train_only:
+        split_iter = [
+            (
+                np.arange(len(features)),
+                np.empty(0, dtype=int),
+            )
+        ]
+    elif config.group_column:
         splitter = GroupKFold(n_splits=config.folds)
         split_iter = splitter.split(
             features, target, groups=group_values.to_numpy(copy=False)
@@ -226,12 +234,13 @@ def run_experiment(config: ExperimentConfig, *, overwrite: bool = False) -> Expe
 
     for fold_idx, (train_idx, valid_idx) in enumerate(split_iter, start=1):
         fold_start = time.perf_counter()
+        valid_size = len(valid_idx)
+        has_valid = valid_size > 0
         print(
-            f"[fold {fold_idx}] 学習開始: train={len(train_idx)} valid={len(valid_idx)} features={len(feature_cols)}",
+            f"[fold {fold_idx}] 学習開始: train={len(train_idx)} valid={valid_size} features={len(feature_cols)}",
             flush=True,
         )
         train_weight = sample_weight[train_idx] if sample_weight is not None else None
-        valid_weight = sample_weight[valid_idx] if sample_weight is not None else None
         train_set = lgb.Dataset(
             features.iloc[train_idx],
             label=target[train_idx],
@@ -239,24 +248,30 @@ def run_experiment(config: ExperimentConfig, *, overwrite: bool = False) -> Expe
             categorical_feature=categorical_cols or None,
             weight=train_weight,
         )
-        valid_set = lgb.Dataset(
-            features.iloc[valid_idx],
-            label=target[valid_idx],
-            reference=train_set,
-            categorical_feature=categorical_cols or None,
-            weight=valid_weight,
-        )
+        valid_sets = [train_set]
+        valid_names = ["train"]
+        callbacks = [_fold_progress_callback(fold_idx, config.progress_period)]
+        if has_valid:
+            valid_weight = sample_weight[valid_idx] if sample_weight is not None else None
+            valid_set = lgb.Dataset(
+                features.iloc[valid_idx],
+                label=target[valid_idx],
+                reference=train_set,
+                categorical_feature=categorical_cols or None,
+                weight=valid_weight,
+            )
+            valid_sets.append(valid_set)
+            valid_names.append("valid")
+            if config.early_stopping_rounds > 0:
+                callbacks.insert(0, lgb.early_stopping(config.early_stopping_rounds, verbose=False))
 
         booster = lgb.train(
             lgbm_params,
             train_set,
             num_boost_round=config.num_boost_round,
-            valid_sets=[train_set, valid_set],
-            valid_names=["train", "valid"],
-            callbacks=[
-                lgb.early_stopping(config.early_stopping_rounds, verbose=False),
-                _fold_progress_callback(fold_idx, config.progress_period),
-            ],
+            valid_sets=valid_sets,
+            valid_names=valid_names,
+            callbacks=callbacks,
         )
 
         best_iteration = booster.best_iteration or config.num_boost_round
@@ -264,21 +279,28 @@ def run_experiment(config: ExperimentConfig, *, overwrite: bool = False) -> Expe
             features.iloc[train_idx],
             num_iteration=best_iteration,
         )
-        valid_pred = booster.predict(
-            features.iloc[valid_idx],
-            num_iteration=best_iteration,
-        )
+        valid_pred = None
+        if has_valid:
+            valid_pred = booster.predict(
+                features.iloc[valid_idx],
+                num_iteration=best_iteration,
+            )
         test_pred = booster.predict(test_features, num_iteration=best_iteration)
         if config.log_target:
             train_pred = np.exp(train_pred)
-            valid_pred = np.exp(valid_pred)
+            if valid_pred is not None:
+                valid_pred = np.exp(valid_pred)
             test_pred = np.exp(test_pred)
 
         train_pred_sum[train_idx] += train_pred
         train_pred_count[train_idx] += 1
 
-        oof_predictions[valid_idx] = valid_pred
-        oof_folds[valid_idx] = fold_idx
+        if has_valid and valid_pred is not None:
+            oof_predictions[valid_idx] = valid_pred
+            oof_folds[valid_idx] = fold_idx
+        else:
+            oof_predictions[train_idx] = train_pred
+            oof_folds[train_idx] = fold_idx
         test_predictions_folds.append(test_pred)
 
         model_path = models_dir / f"fold_{fold_idx}.txt"
@@ -297,26 +319,44 @@ def run_experiment(config: ExperimentConfig, *, overwrite: bool = False) -> Expe
         )
 
         fold_time = time.perf_counter() - fold_start
-        eval_target = target_raw[valid_idx]
         train_target = target_raw[train_idx]
         train_metrics = _regression_metrics(train_target, train_pred)
-        valid_metrics = _regression_metrics(eval_target, valid_pred)
+        valid_metrics = None
+        if has_valid and valid_pred is not None:
+            eval_target = target_raw[valid_idx]
+            valid_metrics = _regression_metrics(eval_target, valid_pred)
         fold_entry = {
             "fold": fold_idx,
             "rows_train": int(len(train_idx)),
-            "rows_valid": int(len(valid_idx)),
+            "rows_valid": int(valid_size),
             "best_iteration": int(best_iteration),
             "train_mape": train_metrics["mape"],
             "train_mae": train_metrics["mae"],
             "train_rmse": train_metrics["rmse"],
-            "valid_mape": valid_metrics["mape"],
-            "valid_mae": valid_metrics["mae"],
-            "valid_rmse": valid_metrics["rmse"],
-            "mape": valid_metrics["mape"],
-            "mae": valid_metrics["mae"],
-            "rmse": valid_metrics["rmse"],
             "train_time_sec": float(fold_time),
         }
+        if valid_metrics is not None:
+            fold_entry.update(
+                {
+                    "valid_mape": valid_metrics["mape"],
+                    "valid_mae": valid_metrics["mae"],
+                    "valid_rmse": valid_metrics["rmse"],
+                    "mape": valid_metrics["mape"],
+                    "mae": valid_metrics["mae"],
+                    "rmse": valid_metrics["rmse"],
+                }
+            )
+        else:
+            fold_entry.update(
+                {
+                    "valid_mape": train_metrics["mape"],
+                    "valid_mae": train_metrics["mae"],
+                    "valid_rmse": train_metrics["rmse"],
+                    "mape": train_metrics["mape"],
+                    "mae": train_metrics["mae"],
+                    "rmse": train_metrics["rmse"],
+                }
+            )
         fold_metrics.append(fold_entry)
         if train_overlap_lookup is not None and category_specs is not None:
             def _log_bucket_metrics(
@@ -344,7 +384,9 @@ def run_experiment(config: ExperimentConfig, *, overwrite: bool = False) -> Expe
                     )
 
             _log_bucket_metrics("train", train_idx, train_target, train_pred)
-            _log_bucket_metrics("valid", valid_idx, eval_target, valid_pred)
+            if has_valid and valid_pred is not None:
+                eval_target = target_raw[valid_idx]
+                _log_bucket_metrics("valid", valid_idx, eval_target, valid_pred)
         print(
             (
                 "[fold {fold}] 完了: best_iter={best_iter} "
@@ -509,7 +551,10 @@ def _validate_config(config: ExperimentConfig) -> None:
         )
     if not config.experiment_name:
         raise ExperimentError("experiment_name は必須です。")
-    if config.folds < 2:
+    if config.full_train_only:
+        if config.folds < 1:
+            raise ExperimentError("full_train_only=True の場合でも folds は1以上を指定してください。")
+    elif config.folds < 2:
         raise ExperimentError("folds は2以上を指定してください。")
     if not config.description.strip():
         raise ExperimentError("description は1文字以上の説明を入力してください。")
