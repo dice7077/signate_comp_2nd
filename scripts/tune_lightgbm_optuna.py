@@ -10,7 +10,8 @@ import time
 from copy import deepcopy
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Tuple
+from urllib.parse import urlparse
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -30,11 +31,15 @@ from src.data_pipeline.utils.paths import DATA_DIR
 from src.training import ExperimentConfig, run_experiment
 from src.training.experiment import (
     ExperimentError,
+    _bucket_metrics_dataframe,
     _compute_sample_weight,
     _fold_progress_callback,
+    _has_pre_dedup_overlap_columns,
     _prepare_categorical_features,
+    _prepare_overlap_analysis,
+    _prepare_pre_dedup_overlap_analysis,
+    _regression_metrics,
     _resolve_feature_columns,
-    _safe_mape,
 )
 
 
@@ -192,6 +197,8 @@ class FastFoldContext:
     feature_cols: list[str]
     group_values: pd.Series | None
     splits: list[tuple[np.ndarray, np.ndarray]]
+    bucket_keys: np.ndarray | None
+    bucket_category_specs: Tuple[Tuple[str, str], ...] | None
 
 
 def _clamp_float(value: float, low: float, high: float) -> float:
@@ -218,8 +225,8 @@ def build_base_trial_params(config: ExperimentConfig) -> Dict[str, Any]:
         "feature_fraction": _clamp_float(get("feature_fraction", 0.9), 0.6, 1.0),
         "bagging_fraction": _clamp_float(get("bagging_fraction", 0.9), 0.6, 1.0),
         "bagging_freq": _clamp_int(int(get("bagging_freq", 1)), 1, 7),
-        "lambda_l1": _clamp_float(max(get("lambda_l1", 0.0), 1e-3), 1e-3, 10.0),
-        "lambda_l2": _clamp_float(max(get("lambda_l2", 0.0), 1e-3), 1e-3, 10.0),
+        "lambda_l1": _clamp_float(max(get("lambda_l1", 0.0), 1e-5), 1e-5, 10.0),
+        "lambda_l2": _clamp_float(max(get("lambda_l2", 0.0), 1e-5), 1e-5, 10.0),
         "min_gain_to_split": _clamp_float(get("min_gain_to_split", 0.0), 0.0, 0.5),
     }
     allowed_depths = [-1, 6, 8, 10, 12, 14, 16]
@@ -285,6 +292,34 @@ def prepare_fast_fold_context(config: ExperimentConfig) -> FastFoldContext:
             raise ExperimentError(f"Categorical列が存在しません: {', '.join(missing_cats)}")
         _prepare_categorical_features(features, test_features, categorical_cols)
 
+    bucket_keys: np.ndarray | None = None
+    bucket_category_specs: Tuple[Tuple[str, str], ...] | None = None
+    if config.bucket_analysis:
+        use_pre_dedup = (
+            not config.bucket_analysis.use_building
+            and _has_pre_dedup_overlap_columns(train_df)
+        )
+        if use_pre_dedup:
+            overlap_analysis = _prepare_pre_dedup_overlap_analysis(
+                train_df=train_df,
+                test_df=test_df,
+                id_column=config.id_column,
+            )
+        else:
+            overlap_analysis = _prepare_overlap_analysis(
+                train_df=train_df,
+                test_df=test_df,
+                id_column=config.id_column,
+                config=config.bucket_analysis,
+            )
+        bucket_category_specs = overlap_analysis["category_specs"]  # type: ignore[assignment]
+        train_assignments = overlap_analysis["train_assignments"]
+        bucket_lookup = (
+            train_assignments.set_index(config.id_column)["overlap_category"]  # type: ignore[index]
+        )
+        ordered_ids = train_df[config.id_column]
+        bucket_keys = bucket_lookup.reindex(ordered_ids).to_numpy(copy=False)
+
     if config.group_column:
         splitter = GroupKFold(n_splits=config.folds)
         split_iter = splitter.split(features, target, groups=group_values.to_numpy(copy=False))
@@ -302,6 +337,8 @@ def prepare_fast_fold_context(config: ExperimentConfig) -> FastFoldContext:
         feature_cols=feature_cols,
         group_values=group_values,
         splits=splits,
+        bucket_keys=bucket_keys,
+        bucket_category_specs=bucket_category_specs,
     )
 
 
@@ -361,19 +398,69 @@ def run_fast_fold_training(
     elapsed = time.perf_counter() - start
 
     best_iteration = booster.best_iteration or config.num_boost_round
-    valid_pred = booster.predict(data.features.iloc[valid_idx], num_iteration=best_iteration)
+    train_pred = booster.predict(
+        data.features.iloc[train_idx],
+        num_iteration=best_iteration,
+    )
+    valid_pred = booster.predict(
+        data.features.iloc[valid_idx],
+        num_iteration=best_iteration,
+    )
     if config.log_target:
+        train_pred = np.exp(train_pred)
         valid_pred = np.exp(valid_pred)
 
+    train_target = data.target_raw[train_idx]
     eval_target = data.target_raw[valid_idx]
+    train_metrics = _regression_metrics(train_target, train_pred)
+    valid_metrics = _regression_metrics(eval_target, valid_pred)
+
+    if data.bucket_keys is not None and data.bucket_category_specs is not None:
+        def _log_bucket_metrics(
+            stage: str,
+            indices: np.ndarray,
+            y_true_values: np.ndarray,
+            y_pred_values: np.ndarray,
+        ) -> None:
+            bucket_subset = data.bucket_keys[indices]
+            bucket_summary = _bucket_metrics_dataframe(
+                bucket_keys=bucket_subset,
+                y_true=y_true_values,
+                y_pred=y_pred_values,
+                category_specs=data.bucket_category_specs,
+            )
+            print(
+                f"[fast-fold {fold_index}] {stage} bucket metrics:",
+                flush=True,
+            )
+            for _, row in bucket_summary.iterrows():
+                count = int(row["data_id_count"])
+                ratio = row["ratio"]
+                mape = row["mape"]
+                ratio_pct = ratio * 100 if pd.notna(ratio) else 0.0
+                mape_text = f"{mape:.6f}" if pd.notna(mape) else "N/A"
+                print(
+                    f"    - {row['label']}: {count:,} rows ({ratio_pct:.2f}%) MAPE={mape_text}",
+                    flush=True,
+                )
+
+        _log_bucket_metrics("train", train_idx, train_target, train_pred)
+        _log_bucket_metrics("valid", valid_idx, eval_target, valid_pred)
+
     fold_entry = {
         "fold": fold_index,
         "rows_train": int(len(train_idx)),
         "rows_valid": int(len(valid_idx)),
         "best_iteration": int(best_iteration),
-        "mape": _safe_mape(eval_target, valid_pred),
-        "mae": float(np.mean(np.abs(eval_target - valid_pred))),
-        "rmse": float(np.sqrt(np.mean((eval_target - valid_pred) ** 2))),
+        "train_mape": train_metrics["mape"],
+        "train_mae": train_metrics["mae"],
+        "train_rmse": train_metrics["rmse"],
+        "valid_mape": valid_metrics["mape"],
+        "valid_mae": valid_metrics["mae"],
+        "valid_rmse": valid_metrics["rmse"],
+        "mape": valid_metrics["mape"],
+        "mae": valid_metrics["mae"],
+        "rmse": valid_metrics["rmse"],
         "train_time_sec": float(elapsed),
     }
     return fold_entry
@@ -381,15 +468,15 @@ def run_fast_fold_training(
 
 def suggest_lgbm_params(trial: optuna.trial.Trial, base_params: Dict[str, Any]) -> Dict[str, Any]:
     params = dict(base_params)
-    params["learning_rate"] = trial.suggest_float("learning_rate", 0.02, 0.2, log=True)
-    params["num_leaves"] = trial.suggest_int("num_leaves", 63, 511, step=8)
-    params["max_depth"] = trial.suggest_categorical("max_depth", [-1, 6, 8, 10, 12, 14, 16])
+    params["learning_rate"] = trial.suggest_float("learning_rate", 0.003, 0.2, log=True)
+    params["num_leaves"] = trial.suggest_int("num_leaves", 63, 511, step=4)
+    params["max_depth"] = trial.suggest_int("max_depth", 6, 32)
     params["min_data_in_leaf"] = trial.suggest_int("min_data_in_leaf", 20, 400)
-    params["feature_fraction"] = trial.suggest_float("feature_fraction", 0.6, 1.0)
-    params["bagging_fraction"] = trial.suggest_float("bagging_fraction", 0.6, 1.0)
+    params["feature_fraction"] = trial.suggest_float("feature_fraction", 0.4, 1.0)
+    params["bagging_fraction"] = trial.suggest_float("bagging_fraction", 0.4, 1.0)
     params["bagging_freq"] = trial.suggest_int("bagging_freq", 1, 7)
-    params["lambda_l1"] = trial.suggest_float("lambda_l1", 0.0, 10.0)
-    params["lambda_l2"] = trial.suggest_float("lambda_l2", 0.0, 10.0)
+    params["lambda_l1"] = trial.suggest_float("lambda_l1", 1e-6, 10.0, log=True)
+    params["lambda_l2"] = trial.suggest_float("lambda_l2", 1e-6, 10.0, log=True)
     params["min_gain_to_split"] = trial.suggest_float("min_gain_to_split", 0.0, 0.5)
     params.setdefault("feature_pre_filter", False)
     params.setdefault("verbosity", -1)
@@ -432,8 +519,8 @@ def build_base_trial_params(config: ExperimentConfig) -> Dict[str, Any]:
     params["feature_fraction"] = float(_clip(_get("feature_fraction", 0.9), 0.6, 1.0))
     params["bagging_fraction"] = float(_clip(_get("bagging_fraction", 0.9), 0.6, 1.0))
     params["bagging_freq"] = int(_clip(base_params.get("bagging_freq", 1), 1, 7))
-    params["lambda_l1"] = float(_clip(base_params.get("lambda_l1", 0.0), 0.0, 10.0))
-    params["lambda_l2"] = float(_clip(base_params.get("lambda_l2", 0.0), 0.0, 10.0))
+    params["lambda_l1"] = float(_clip(base_params.get("lambda_l1", 1e-5), 1e-5, 10.0))
+    params["lambda_l2"] = float(_clip(base_params.get("lambda_l2", 1e-5), 1e-5, 10.0))
     params["min_gain_to_split"] = float(_clip(base_params.get("min_gain_to_split", 0.0), 0.0, 0.5))
     params.setdefault("feature_pre_filter", False)
     params.setdefault("verbosity", -1)
@@ -513,12 +600,33 @@ def resolve_storage_settings(
         storage_url = f"sqlite:///{storage_path}"
         auto_storage = True
 
+    if storage_url:
+        storage_url = _prepare_sqlite_storage_path(storage_url)
+
     study_name = args.study_name
     if storage_url and not study_name:
         study_name = base_config.experiment_name
 
     load_if_exists = args.load_if_exists or auto_storage
     return storage_url, study_name, load_if_exists
+
+
+def _prepare_sqlite_storage_path(storage_url: str) -> str:
+    parsed = urlparse(storage_url)
+    if parsed.scheme != "sqlite":
+        return storage_url
+
+    raw_path = (parsed.netloc or "") + (parsed.path or "")
+    if raw_path.startswith("//"):
+        raw_path = raw_path[1:]
+    if not raw_path:
+        return storage_url
+
+    db_path = Path(raw_path)
+    if not db_path.is_absolute():
+        db_path = PROJECT_ROOT / db_path
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    return f"sqlite:///{db_path}"
 
 
 def build_objective(

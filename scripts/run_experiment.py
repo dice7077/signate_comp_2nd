@@ -264,25 +264,47 @@ def print_summary(result: ExperimentResult) -> None:
     print(f"Validation RMSE     : {metrics['rmse']:.2f}")
     print("Fold metrics:")
     for entry in result.fold_metrics:
-        print(
-            f"  Fold {entry['fold']}: "
-            f"MAPE={entry['mape']:.6f} MAE={entry['mae']:.2f} "
-            f"RMSE={entry['rmse']:.2f} best_iter={entry['best_iteration']}"
-        )
+        train_mape = entry.get("train_mape")
+        train_mae = entry.get("train_mae")
+        train_rmse = entry.get("train_rmse")
+        valid_mape = entry.get("valid_mape", entry.get("mape"))
+        valid_mae = entry.get("valid_mae", entry.get("mae"))
+        valid_rmse = entry.get("valid_rmse", entry.get("rmse"))
+        if train_mape is not None:
+            print(
+                f"  Fold {entry['fold']}: "
+                f"Train MAPE={train_mape:.6f} MAE={train_mae:.2f} RMSE={train_rmse:.2f} | "
+                f"Valid MAPE={valid_mape:.6f} MAE={valid_mae:.2f} RMSE={valid_rmse:.2f} "
+                f"(best_iter={entry['best_iteration']})"
+            )
+        else:
+            print(
+                f"  Fold {entry['fold']}: "
+                f"MAPE={entry['mape']:.6f} MAE={entry['mae']:.2f} "
+                f"RMSE={entry['rmse']:.2f} best_iter={entry['best_iteration']}"
+            )
     bucket_artifacts = result.artifacts.get("bucket_analysis")
     if isinstance(bucket_artifacts, dict):
         summary = bucket_artifacts.get("summary")
+        summary_train = bucket_artifacts.get("summary_train")
         if summary:
-            print("Bucket metrics:")
-            for row in summary:
-                count = row.get("data_id_count", 0)
-                ratio = row.get("ratio", 0.0)
-                mape = row.get("mape")
-                ratio_pct = ratio * 100 if ratio is not None else 0.0
-                mape_text = f"{mape:.6f}" if mape is not None else "N/A"
-                print(
-                    f"  - {row.get('label')}: {count:,} rows ({ratio_pct:.2f}%) MAPE={mape_text}"
-                )
+            print("Bucket metrics (valid):")
+            _print_bucket_summary(summary)
+        if summary_train:
+            print("Bucket metrics (train):")
+            _print_bucket_summary(summary_train)
+
+
+def _print_bucket_summary(rows: List[Dict[str, Any]]) -> None:
+    for row in rows:
+        count = row.get("data_id_count", 0)
+        ratio = row.get("ratio", 0.0)
+        mape = row.get("mape")
+        ratio_pct = ratio * 100 if ratio is not None else 0.0
+        mape_text = f"{mape:.6f}" if mape is not None else "N/A"
+        print(
+            f"  - {row.get('label')}: {count:,} rows ({ratio_pct:.2f}%) MAPE={mape_text}"
+        )
 
 
 if __name__ == "__main__":

@@ -1,8 +1,8 @@
 {
   "type_label": "kodate",
-  "dataset_version": "0008_test_202207only",
-  "experiment_name": "0008_test_202207only",
-  "description": "kodate tags + same-unit history log features (test overlap limit: target_ym 202207)",
+  "dataset_version": "0010_unit_overlap",
+  "experiment_name": "0014_inverse_weights_unit_bucket",
+  "description": "0012_inverse_weights_unit_bucket と同条件（train評価出力版）",
   "folds": 5,
   "random_state": 42,
   "num_boost_round": 16000,
@@ -10,7 +10,7 @@
   "lightgbm_params": {
     "objective": "regression",
     "metric": "l2",
-    "learning_rate": 0.03,
+    "learning_rate": 0.1,
     "num_leaves": 63,
     "max_depth": -1,
     "feature_fraction": 0.9,
@@ -84,13 +84,7 @@
     "building_tag_294201",
     "building_tag_334101",
     "building_tag_334201",
-    "building_tag_334001",
-    "unit_id",
-    "money_room_past_6m",
-    "money_room_past_12m",
-    "money_room_past_18m",
-    "money_room_past_24m",
-    "money_room_past_over_30m"
+    "building_tag_334001"
   ],
   "categorical_features": [
     "building_structure",
@@ -112,8 +106,12 @@
   ],
   "progress_period": 400,
   "log_target": true,
-  "group_column": "unit_id"
+  "group_column": null,
+  "weight_strategy": "inverse_log_target",
+  "bucket_analysis": {
+    "unit_column": "unit_id",
+    "building_column": null,
+    "output_prefix": "unit_overlap",
+    "use_building": false
+  }
 }
-
-
-

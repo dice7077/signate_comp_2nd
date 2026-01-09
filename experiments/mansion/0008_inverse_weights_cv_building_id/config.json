@@ -119,3 +119,4 @@
   "group_column": "building_id",
   "weight_strategy": "inverse_log_target"
 }
+

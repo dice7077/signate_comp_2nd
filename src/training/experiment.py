@@ -202,6 +202,8 @@ def run_experiment(config: ExperimentConfig, *, overwrite: bool = False) -> Expe
     fold_importances: List[pd.DataFrame] = []
     fold_metrics: List[Dict[str, Any]] = []
     model_paths: List[str] = []
+    train_pred_sum = np.zeros(len(train_df), dtype=float)
+    train_pred_count = np.zeros(len(train_df), dtype=int)
 
     lgbm_params = dict(config.lightgbm_params)
     # seedはfoldごとに固定する
@@ -258,11 +260,22 @@ def run_experiment(config: ExperimentConfig, *, overwrite: bool = False) -> Expe
         )
 
         best_iteration = booster.best_iteration or config.num_boost_round
-        valid_pred = booster.predict(features.iloc[valid_idx], num_iteration=best_iteration)
+        train_pred = booster.predict(
+            features.iloc[train_idx],
+            num_iteration=best_iteration,
+        )
+        valid_pred = booster.predict(
+            features.iloc[valid_idx],
+            num_iteration=best_iteration,
+        )
         test_pred = booster.predict(test_features, num_iteration=best_iteration)
         if config.log_target:
+            train_pred = np.exp(train_pred)
             valid_pred = np.exp(valid_pred)
             test_pred = np.exp(test_pred)
+
+        train_pred_sum[train_idx] += train_pred
+        train_pred_count[train_idx] += 1
 
         oof_predictions[valid_idx] = valid_pred
         oof_folds[valid_idx] = fold_idx
@@ -285,47 +298,79 @@ def run_experiment(config: ExperimentConfig, *, overwrite: bool = False) -> Expe
 
         fold_time = time.perf_counter() - fold_start
         eval_target = target_raw[valid_idx]
+        train_target = target_raw[train_idx]
+        train_metrics = _regression_metrics(train_target, train_pred)
+        valid_metrics = _regression_metrics(eval_target, valid_pred)
         fold_entry = {
             "fold": fold_idx,
             "rows_train": int(len(train_idx)),
             "rows_valid": int(len(valid_idx)),
             "best_iteration": int(best_iteration),
-            "mape": _safe_mape(eval_target, valid_pred),
-            "mae": float(np.mean(np.abs(eval_target - valid_pred))),
-            "rmse": float(math.sqrt(np.mean((eval_target - valid_pred) ** 2))),
+            "train_mape": train_metrics["mape"],
+            "train_mae": train_metrics["mae"],
+            "train_rmse": train_metrics["rmse"],
+            "valid_mape": valid_metrics["mape"],
+            "valid_mae": valid_metrics["mae"],
+            "valid_rmse": valid_metrics["rmse"],
+            "mape": valid_metrics["mape"],
+            "mae": valid_metrics["mae"],
+            "rmse": valid_metrics["rmse"],
             "train_time_sec": float(fold_time),
         }
         fold_metrics.append(fold_entry)
         if train_overlap_lookup is not None and category_specs is not None:
-            valid_ids = train_df.iloc[valid_idx][config.id_column]
-            overlap_subset = train_overlap_lookup.loc[valid_ids]
-            bucket_summary = _bucket_metrics_dataframe(
-                bucket_keys=overlap_subset["overlap_category"].to_numpy(),
-                y_true=target_raw[valid_idx],
-                y_pred=valid_pred,
-                category_specs=category_specs,
-            )
-            print(f"[fold {fold_idx}] bucket metrics:", flush=True)
-            for _, row in bucket_summary.iterrows():
-                count = int(row["data_id_count"])
-                ratio_pct = row["ratio"] * 100 if row["ratio"] is not None else 0.0
-                mape_text = f"{row['mape']:.6f}" if row["mape"] is not None else "N/A"
-                print(
-                    f"    - {row['label']}: {count:,} rows ({ratio_pct:.2f}%) MAPE={mape_text}",
-                    flush=True,
+            def _log_bucket_metrics(
+                stage: str,
+                indices: np.ndarray,
+                y_true_values: np.ndarray,
+                y_pred_values: np.ndarray,
+            ) -> None:
+                ids = train_df.iloc[indices][config.id_column]
+                overlap_subset = train_overlap_lookup.loc[ids]
+                bucket_summary = _bucket_metrics_dataframe(
+                    bucket_keys=overlap_subset["overlap_category"].to_numpy(),
+                    y_true=y_true_values,
+                    y_pred=y_pred_values,
+                    category_specs=category_specs,
                 )
+                print(f"[fold {fold_idx}] {stage} bucket metrics:", flush=True)
+                for _, row in bucket_summary.iterrows():
+                    count = int(row["data_id_count"])
+                    ratio_pct = row["ratio"] * 100 if row["ratio"] is not None else 0.0
+                    mape_text = f"{row['mape']:.6f}" if row["mape"] is not None else "N/A"
+                    print(
+                        f"    - {row['label']}: {count:,} rows ({ratio_pct:.2f}%) MAPE={mape_text}",
+                        flush=True,
+                    )
+
+            _log_bucket_metrics("train", train_idx, train_target, train_pred)
+            _log_bucket_metrics("valid", valid_idx, eval_target, valid_pred)
         print(
-            "[fold {fold}] 完了: best_iter={best_iter} "
-            "MAPE={mape:.6f} MAE={mae:.2f} RMSE={rmse:.2f} time={time:.1f}s".format(
+            (
+                "[fold {fold}] 完了: best_iter={best_iter} "
+                "train_MAPE={train_mape:.6f} valid_MAPE={valid_mape:.6f} "
+                "train_MAE={train_mae:.2f} valid_MAE={valid_mae:.2f} "
+                "time={time:.1f}s"
+            ).format(
                 fold=fold_idx,
                 best_iter=fold_entry["best_iteration"],
-                mape=fold_entry["mape"],
-                mae=fold_entry["mae"],
-                rmse=fold_entry["rmse"],
+                train_mape=fold_entry["train_mape"],
+                valid_mape=fold_entry["valid_mape"],
+                train_mae=fold_entry["train_mae"],
+                valid_mae=fold_entry["valid_mae"],
                 time=fold_entry["train_time_sec"],
             ),
             flush=True,
         )
+
+    train_pred_full = np.zeros(len(train_df), dtype=float)
+    nonzero_mask = train_pred_count > 0
+    if not np.all(nonzero_mask):
+        print(
+            "[WARN] 一部の行でtrain予測が得られませんでした（bucket train metricsには含まれません）。",
+            flush=True,
+        )
+    train_pred_full[nonzero_mask] = train_pred_sum[nonzero_mask] / train_pred_count[nonzero_mask]
 
     overall_metrics = _summarize_metrics(target_raw, oof_predictions, fold_metrics)
 
@@ -345,6 +390,7 @@ def run_experiment(config: ExperimentConfig, *, overwrite: bool = False) -> Expe
             "fold": oof_folds,
             "y_true": target_raw,
             "y_pred": oof_predictions,
+            "train_pred": train_pred_full,
         }
     )
     pre_dedup_artifacts = None
@@ -647,27 +693,49 @@ def _persist_bucket_artifacts(
         test_assign_path = reports_dir / f"{prefix}_test_assignments.parquet"
         test_assignments.to_parquet(test_assign_path, index=False)
 
-    summary_df, metric_paths = _summarize_bucket_metrics(
+    summary_valid, metric_paths_valid = _summarize_bucket_metrics(
         oof_df=oof_df,
         prefix=prefix,
         reports_dir=reports_dir,
         category_specs=overlap_analysis["category_specs"],  # type: ignore[arg-type]
+        y_pred=oof_df["y_pred"].to_numpy(),
+        variant="valid",
     )
+    summary_train = None
+    metric_paths_train = None
+    if "train_pred" in oof_df.columns:
+        summary_train, metric_paths_train = _summarize_bucket_metrics(
+            oof_df=oof_df,
+            prefix=prefix,
+            reports_dir=reports_dir,
+            category_specs=overlap_analysis["category_specs"],  # type: ignore[arg-type]
+            y_pred=oof_df["train_pred"].to_numpy(),
+            variant="train",
+        )
     metric_paths_rel = {
-        "metrics_csv": str(metric_paths["csv"].relative_to(PROJECT_ROOT)),
-        "metrics_json": str(metric_paths["json"].relative_to(PROJECT_ROOT)),
+        "metrics_csv": str(metric_paths_valid["csv"].relative_to(PROJECT_ROOT)),
+        "metrics_json": str(metric_paths_valid["json"].relative_to(PROJECT_ROOT)),
     }
+    if metric_paths_train:
+        metric_paths_rel["metrics_train_csv"] = str(
+            metric_paths_train["csv"].relative_to(PROJECT_ROOT)
+        )
+        metric_paths_rel["metrics_train_json"] = str(
+            metric_paths_train["json"].relative_to(PROJECT_ROOT)
+        )
     artifacts = {
         **metric_paths_rel,
         "train_assignments": str(train_assign_path.relative_to(PROJECT_ROOT)),
     }
     if test_assign_path is not None:
         artifacts["test_assignments"] = str(test_assign_path.relative_to(PROJECT_ROOT))
-    artifacts["summary"] = summary_df.to_dict(orient="records")
+    artifacts["summary"] = summary_valid.to_dict(orient="records")
+    if summary_train is not None:
+        artifacts["summary_train"] = summary_train.to_dict(orient="records")
 
     # 解析結果を console に軽く表示しておくとログ確認が楽になる
-    print(f"[bucket] {prefix} summary:")
-    for _, row in summary_df.iterrows():
+    print(f"[bucket] {prefix} summary (valid):")
+    for _, row in summary_valid.iterrows():
         label = row["label"]
         count = int(row["data_id_count"])
         ratio = row["ratio"]
@@ -675,6 +743,16 @@ def _persist_bucket_artifacts(
         ratio_pct = ratio * 100 if pd.notna(ratio) else 0.0
         mape_text = f"{mape:.6f}" if pd.notna(mape) else "N/A"
         print(f"    - {label}: {count:,} rows ({ratio_pct:.2f}%) MAPE={mape_text}")
+    if summary_train is not None:
+        print(f"[bucket] {prefix} summary (train):")
+        for _, row in summary_train.iterrows():
+            label = row["label"]
+            count = int(row["data_id_count"])
+            ratio = row["ratio"]
+            mape = row["mape"]
+            ratio_pct = ratio * 100 if pd.notna(ratio) else 0.0
+            mape_text = f"{mape:.6f}" if pd.notna(mape) else "N/A"
+            print(f"    - {label}: {count:,} rows ({ratio_pct:.2f}%) MAPE={mape_text}")
 
     return artifacts
 
@@ -719,15 +797,21 @@ def _summarize_bucket_metrics(
     prefix: str,
     reports_dir: Path,
     category_specs: Tuple[Tuple[str, str], ...],
+    y_pred: np.ndarray,
+    variant: str,
 ) -> tuple[pd.DataFrame, Dict[str, Path]]:
     summary_df = _bucket_metrics_dataframe(
         bucket_keys=oof_df["overlap_category"].to_numpy(),
         y_true=oof_df["y_true"].to_numpy(),
-        y_pred=oof_df["y_pred"].to_numpy(),
+        y_pred=y_pred,
         category_specs=category_specs,
     )
-    csv_path = reports_dir / f"{prefix}_bucket_metrics.csv"
-    json_path = reports_dir / f"{prefix}_bucket_metrics.json"
+    if variant == "valid":
+        base_name = f"{prefix}_bucket_metrics"
+    else:
+        base_name = f"{prefix}_{variant}_bucket_metrics"
+    csv_path = reports_dir / f"{base_name}.csv"
+    json_path = reports_dir / f"{base_name}.json"
     summary_df.to_csv(csv_path, index=False)
     summary_df.to_json(json_path, orient="records", force_ascii=False, indent=2)
     return summary_df, {"csv": csv_path, "json": json_path}
@@ -840,6 +924,19 @@ def _safe_mape(y_true: Sequence[float], y_pred: Sequence[float], eps: float = 1e
     y_pred = np.asarray(y_pred, dtype=float)
     denom = np.clip(np.abs(y_true), eps, None)
     return float(np.mean(np.abs((y_true - y_pred) / denom)))
+
+
+def _regression_metrics(y_true: Sequence[float], y_pred: Sequence[float]) -> Dict[str, float]:
+    y_true_arr = np.asarray(y_true, dtype=float)
+    y_pred_arr = np.asarray(y_pred, dtype=float)
+    diff = y_true_arr - y_pred_arr
+    mae = float(np.mean(np.abs(diff)))
+    rmse = float(math.sqrt(np.mean(diff**2)))
+    return {
+        "mape": _safe_mape(y_true_arr, y_pred_arr),
+        "mae": mae,
+        "rmse": rmse,
+    }
 
 
 def _summarize_metrics(
